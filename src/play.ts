@@ -46,7 +46,8 @@ export async function resolveM3u8Url(sourceUrl: string): Promise<ResolvedM3u8 | 
     }
 
     return null;
-  } catch {
+  } catch (e: any) {
+    console.error("resolveM3u8Url error:", e.message);
     return null;
   }
 }

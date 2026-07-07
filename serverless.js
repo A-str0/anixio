@@ -48,8 +48,9 @@ async function handlePlay(req, res) {
     res.setHeader("Content-Type", "application/vnd.apple.mpegurl");
     res.end(rewritten);
   } catch (e) {
+    console.error("play error:", e.message, e.stack);
     res.statusCode = 500;
-    res.end(JSON.stringify({ err: e.message }));
+    res.end(JSON.stringify({ err: e.message, stack: e.stack }));
   }
 }
 
