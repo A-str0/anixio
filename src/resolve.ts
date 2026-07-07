@@ -26,11 +26,18 @@ function parseImdbId(id: string): { baseId: string; episode?: number; season?: n
 async function fetchCinemetaTitle(type: ContentType, imdbId: string): Promise<string | null> {
   try {
     const url = `${CINEMETA_BASE}/meta/${type}/${imdbId}.json`;
+    console.log("Anixio: fetching cinemeta", url);
     const resp = await fetch(url);
-    if (!resp.ok) return null;
+    if (!resp.ok) {
+      console.log("Anixio: cinemeta not ok", resp.status);
+      return null;
+    }
     const data = (await resp.json()) as CinemetaMeta;
-    return data.meta?.name || null;
-  } catch {
+    const name = data.meta?.name || null;
+    console.log("Anixio: cinemeta title", name);
+    return name;
+  } catch (err) {
+    console.log("Anixio: cinemeta error", String(err));
     return null;
   }
 }
@@ -42,10 +49,15 @@ async function searchAnixartByName(query: string): Promise<number | null> {
       searchBy: 0,
       page: 1,
     });
-    if (!result.content || result.content.length === 0) return null;
-
-    return result.content[0].id;
-  } catch {
+    if (!result.content || result.content.length === 0) {
+      console.log("Anixio: search no results for", query);
+      return null;
+    }
+    const id = result.content[0].id;
+    console.log("Anixio: search found", id, "for", query);
+    return id;
+  } catch (err) {
+    console.log("Anixio: search error", String(err));
     return null;
   }
 }
