@@ -1,12 +1,28 @@
 import { Anixart } from "anixapi";
 import type { ContentType, Stream } from "stremio-addon-sdk";
 import { parseAnixartId, parseAnixartEpisodeId } from "./utils";
+import { resolveToAnixart } from "./resolve";
 
 const client = new Anixart({});
 
 export async function streamHandler(args: { type: ContentType; id: string }): Promise<{ streams: Stream[] }> {
-  const episodeInfo = parseAnixartEpisodeId(args.id);
-  const releaseId = episodeInfo?.releaseId ?? parseAnixartId(args.id);
+  let episodeInfo = parseAnixartEpisodeId(args.id);
+  let releaseId = episodeInfo?.releaseId ?? parseAnixartId(args.id);
+
+  if (!releaseId) {
+    const resolved = await resolveToAnixart(args.type, args.id);
+    if (resolved) {
+      releaseId = resolved;
+      const parsed = args.id.match(/:(\d+):(\d+)$/);
+      if (parsed) {
+        episodeInfo = {
+          releaseId: resolved,
+          season: parseInt(parsed[1], 10),
+          episode: parseInt(parsed[2], 10),
+        };
+      }
+    }
+  }
 
   if (!releaseId) {
     return { streams: [] };

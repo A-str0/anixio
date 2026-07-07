@@ -11,7 +11,7 @@ const builder = new addonBuilder({
   logo: "https://s.anixmirai.com/posters/thumbnails/default.jpg",
   resources: ["catalog", "meta", "stream"],
   types: ["series", "movie"],
-  idPrefixes: ["anixart"],
+  idPrefixes: ["anixart", "tt"],
   catalogs: [
     { id: "anixart_popular", name: "Популярное", type: "series" },
     { id: "anixart_ongoing", name: "Онгоинги", type: "series" },
