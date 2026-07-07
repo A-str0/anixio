@@ -1,4 +1,5 @@
 import { getRouter } from "stremio-addon-sdk";
-import { addonInterface } from "../../src/addon";
+
+const { addonInterface } = require("../dist/addon");
 
 export default getRouter(addonInterface);
