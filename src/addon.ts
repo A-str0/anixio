@@ -11,7 +11,7 @@ const builder = new addonBuilder({
   logo: "https://s.anixmirai.com/posters/thumbnails/default.jpg",
   resources: ["catalog", "meta", "stream"],
   types: ["series", "movie"],
-  idPrefixes: ["anixart", "tt", "kitsu"],
+  idPrefixes: ["anixart", "tt"],
   catalogs: [
     { id: "anixart_popular", name: "Anixart — Популярное", type: "series" },
     { id: "anixart_ongoing", name: "Anixart — Онгоинги", type: "series" },
@@ -27,10 +27,6 @@ const builder = new addonBuilder({
     { id: "anixart_genre_17", name: "Anixart — Сверхъестественное", type: "series" },
     { id: "anixart_genre_19", name: "Anixart — Сёнен", type: "series" },
     { id: "anixart_genre_25", name: "Anixart — Исэкай", type: "series" },
-    { id: "cinemeta_top", name: "Cinemeta — Популярное", type: "series" },
-    { id: "cinemeta_top", name: "Cinemeta — Популярное", type: "movie" },
-    { id: "cinemeta_year", name: "Cinemeta — Новинки", type: "series" },
-    { id: "cinemeta_year", name: "Cinemeta — Новинки", type: "movie" },
   ],
 });
 

@@ -1,60 +1,42 @@
-import { Anixart, KodikParser, AniLibriaParser, SibnetParser } from "anixapi";
+import { Anixart, SibnetParser } from "anixapi";
 import type { ContentType, Stream } from "stremio-addon-sdk";
 import { parseAnixartId, parseAnixartEpisodeId } from "./utils";
 import { resolveToAnixart } from "./resolve";
 
 const client = new Anixart({});
 
-interface ResolvedStream {
-  title: string;
-  url: string;
-  quality: number;
+function fixUrl(url: string): string {
+  if (url.startsWith("//")) return `https:${url}`;
+  return url;
 }
 
-async function resolveStreamUrl(label: string, url: string): Promise<ResolvedStream[]> {
-  const results: ResolvedStream[] = [];
+function isExternalPlayer(url: string): boolean {
+  return url.includes("kodik");
+}
 
-  try {
-    if (url.includes("kodik")) {
-      const links = await KodikParser.getDirectLinks(url);
-      if (links) {
-        for (const [quality, sources] of Object.entries(links)) {
-          for (const src of sources) {
-            results.push({
-              title: `${label} (${quality}p)`,
-              url: src.src,
-              quality: parseInt(quality, 10) || 0,
-            });
-          }
-        }
-      }
-    } else if (url.includes("anilibria") || url.includes("libria")) {
-      const links = await AniLibriaParser.getDirectLinks(url);
-      if (links) {
-        for (const [quality, src] of Object.entries(links)) {
-          results.push({
-            title: `${label} (${quality}p)`,
-            url: src.src,
-            quality: parseInt(quality, 10) || 0,
-          });
-        }
-      }
-    } else if (url.includes("sibnet")) {
+async function resolveStream(label: string, url: string): Promise<Stream | null> {
+  if (!url) return null;
+
+  if (url.includes("sibnet")) {
+    try {
       const directUrl = await SibnetParser.getDirectLink(url);
       if (directUrl) {
-        results.push({ title: label, url: directUrl, quality: 0 });
+        return { name: "Anixart", title: label, url: fixUrl(directUrl) };
       }
-    }
-  } catch {
-    // parser failed, try direct URL
+    } catch {}
   }
 
-  if (results.length === 0) {
-    results.push({ title: label, url, quality: 0 });
+  if (isExternalPlayer(url)) {
+    return { name: "Anixart", title: label, externalUrl: url };
   }
 
-  results.sort((a, b) => b.quality - a.quality);
-  return results;
+  if (url.includes("libria") || url.includes("anilibria")) {
+    return { name: "Anixart", title: label, externalUrl: url };
+  }
+
+  if (url.startsWith("//")) url = fixUrl(url);
+
+  return { name: "Anixart", title: label, url };
 }
 
 export async function streamHandler(args: { type: ContentType; id: string }): Promise<{ streams: Stream[] }> {
@@ -120,17 +102,14 @@ export async function streamHandler(args: { type: ContentType; id: string }): Pr
           const baseLabel = `${dubber.name} | ${source.name}`;
           const labelWithEp = ep.name ? `${baseLabel} — ${ep.name}` : baseLabel;
 
-          const resolvedStreams = await resolveStreamUrl(labelWithEp, ep.url);
+          const stream = await resolveStream(labelWithEp, ep.url);
+          if (!stream) continue;
 
-          const best = resolvedStreams[0];
-          if (best && !seen.has(best.url)) {
-            seen.add(best.url);
-            streams.push({
-              name: "Anixart",
-              title: best.title,
-              url: best.url,
-            });
-          }
+          const key = stream.url || stream.externalUrl || "";
+          if (seen.has(key)) continue;
+          seen.add(key);
+
+          streams.push(stream);
         }
       }
     }
