@@ -26,24 +26,29 @@ async function handleDebug(req, res) {
     const idMatch = html.match(/\w+\.id\s=\s'(.*?)';/i);
     const typeMatch = html.match(/\w+\.type\s=\s'(.*?)';/i);
     const paramsMatch = html.match(/var\surlParams\s=\s'(.*?)';/i);
-    const statusMatch = html.match(/<title>(.*?)<\/title>/i);
+    const titleMatch = html.match(/<title>(.*?)<\/title>/i);
 
     res.setHeader("Content-Type", "application/json");
     res.end(JSON.stringify({
       status: pageResponse.status,
-      title: statusMatch ? statusMatch[1] : "none",
+      title: titleMatch ? titleMatch[1] : "none",
       length: html.length,
+      snippet: html.substring(0, 500),
       hasHash: !!hashMatch,
       hasId: !!idMatch,
       hasType: !!typeMatch,
       hasParams: !!paramsMatch,
-      snippet: html.substring(0, 500),
+      hash: hashMatch ? hashMatch[1] : null,
+      vidId: idMatch ? idMatch[1] : null,
+      vidType: typeMatch ? typeMatch[1] : null,
     }));
   } catch (e) {
     res.statusCode = 500;
     res.end(JSON.stringify({ err: e.message }));
   }
 }
+
+async function handlePlay(req, res) {
   setCors(res);
 
   if (req.method === "OPTIONS") {
@@ -61,7 +66,6 @@ async function handleDebug(req, res) {
     }
 
     const decodedSrc = decodeURIComponent(src);
-
     const m3u8 = await resolveM3u8Url(decodedSrc);
     if (!m3u8) {
       res.statusCode = 500;
@@ -80,9 +84,9 @@ async function handleDebug(req, res) {
     res.setHeader("Content-Type", "application/vnd.apple.mpegurl");
     res.end(rewritten);
   } catch (e) {
-    console.error("play error:", e.message, e.stack);
+    console.error("play error:", e.message);
     res.statusCode = 500;
-    res.end(JSON.stringify({ err: e.message, stack: e.stack }));
+    res.end(JSON.stringify({ err: e.message }));
   }
 }
 
