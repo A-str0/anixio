@@ -1,4 +1,4 @@
-import { KodikParser, AniLibriaParser, SibnetParser } from "anixapi";
+import { AniLibriaParser, SibnetParser } from "anixapi";
 
 interface ResolvedM3u8 {
   url: string;
@@ -6,6 +6,77 @@ interface ResolvedM3u8 {
 }
 
 const QUALITY_ORDER = ["1080", "720", "480", "360", "240"];
+
+async function resolveKodik(sourceUrl: string): Promise<ResolvedM3u8 | null> {
+  try {
+    const pageResp = await fetch(sourceUrl);
+    const html = await pageResp.text();
+
+    const hashMatch = html.match(/\w+\.hash\s=\s'(.*?)';/i);
+    const idMatch = html.match(/\w+\.id\s=\s'(.*?)';/i);
+    const typeMatch = html.match(/\w+\.type\s=\s'(.*?)';/i);
+    const paramsMatch = html.match(/var\surlParams\s=\s'(.*?)';/i);
+
+    if (!hashMatch || !idMatch || !typeMatch || !paramsMatch) return null;
+
+    let urlParams: Record<string, string>;
+    try {
+      urlParams = JSON.parse(paramsMatch[1]);
+    } catch {
+      return null;
+    }
+
+    const apiBody: Record<string, string> = {
+      ...urlParams,
+      type: typeMatch[1],
+      hash: hashMatch[1],
+      id: idMatch[1],
+    };
+
+    const params = new URLSearchParams();
+    for (const [k, v] of Object.entries(apiBody)) {
+      params.append(k, v);
+    }
+
+    const apiUrl = `https://kodikplayer.com/ftor?${params.toString()}`;
+    const apiResp = await fetch(apiUrl, { referrer: "", referrerPolicy: "no-referrer" });
+    const json: any = await apiResp.json();
+
+    if (!json.links) return null;
+
+    const links: Record<string, { src: string }[]> = json.links;
+
+    for (const q of QUALITY_ORDER) {
+      const sources = links[q];
+      if (sources && sources.length > 0) {
+        let src = sources[0].src;
+
+        const validUrlPattern = /\/\/(get|cloud)\.(kodik-storage|solodcdn)\.com\/useruploads\/.*?\/.*?\/(240|360|480|720|1080)\.mp4:hls:manifest.m3u8/s;
+        if (!validUrlPattern.test(src)) {
+          try {
+            const decrypted = src.replace(/[a-zA-Z]/g, (e: string) => {
+              let code = e.charCodeAt(0);
+              code = code + 18;
+              if (e <= "Z" && code > 90) code -= 26;
+              else if (e >= "a" && code > 122) code -= 26;
+              return String.fromCharCode(code);
+            });
+            src = Buffer.from(decrypted, "base64").toString("utf-8");
+          } catch {
+            continue;
+          }
+        }
+
+        const baseUrl = src.substring(0, src.lastIndexOf("/") + 1);
+        return { url: src, cdnBase: baseUrl };
+      }
+    }
+
+    return null;
+  } catch {
+    return null;
+  }
+}
 
 export async function resolveM3u8Url(sourceUrl: string): Promise<ResolvedM3u8 | null> {
   try {
@@ -16,22 +87,7 @@ export async function resolveM3u8Url(sourceUrl: string): Promise<ResolvedM3u8 | 
     }
 
     if (sourceUrl.includes("kodik")) {
-      const links = await KodikParser.getDirectLinks(sourceUrl);
-      if (!links) {
-        console.error("kodik getDirectLinks returned null for:", sourceUrl.substring(0, 60));
-        return null;
-      }
-      if (!links) return null;
-
-      for (const q of QUALITY_ORDER) {
-        const sources = links[q];
-        if (sources && sources.length > 0) {
-          const m3u8Url = sources[0].src;
-          const baseUrl = m3u8Url.substring(0, m3u8Url.lastIndexOf("/") + 1);
-          return { url: m3u8Url, cdnBase: baseUrl };
-        }
-      }
-      return null;
+      return await resolveKodik(sourceUrl);
     }
 
     if (sourceUrl.includes("libria") || sourceUrl.includes("anilibria")) {
@@ -50,8 +106,7 @@ export async function resolveM3u8Url(sourceUrl: string): Promise<ResolvedM3u8 | 
     }
 
     return null;
-  } catch (e: any) {
-    console.error("resolveM3u8Url error:", e.message);
+  } catch {
     return null;
   }
 }

@@ -2,7 +2,6 @@ const { getRouter } = require("stremio-addon-sdk");
 const { addonInterface } = require("./dist/addon");
 const url = require("url");
 const { resolveM3u8Url, rewriteManifest } = require("./dist/play");
-const { KodikParser } = require("anixapi");
 
 const router = getRouter(addonInterface);
 
@@ -10,104 +9,6 @@ function setCors(res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "*");
-}
-
-async function handleDebug(req, res) {
-  setCors(res);
-  try {
-    const parsed = url.parse(req.url, true);
-    const src = parsed.query.src;
-    if (!src) { res.statusCode = 400; return res.end("missing src"); }
-
-    const decodedSrc = decodeURIComponent(src);
-    const result = { step1: "ok" };
-
-    // Step 1: fetch player page
-    let pageResponse, html;
-    try {
-      pageResponse = await fetch(decodedSrc);
-      html = await pageResponse.text();
-      result.step1_status = pageResponse.status;
-      result.step1_len = html.length;
-    } catch (e) {
-      result.step1_error = e.message;
-      return res.end(JSON.stringify(result));
-    }
-
-    // Step 2: extract video info
-    const hashMatch = html.match(/\w+\.hash\s=\s'(.*?)';/i);
-    const idMatch = html.match(/\w+\.id\s=\s'(.*?)';/i);
-    const typeMatch = html.match(/\w+\.type\s=\s'(.*?)';/i);
-    const paramsMatch = html.match(/var\surlParams\s=\s'(.*?)';/i);
-    result.has_hash = !!hashMatch;
-    result.has_id = !!idMatch;
-    result.has_type = !!typeMatch;
-    result.has_params = !!paramsMatch;
-
-    if (!hashMatch || !idMatch || !typeMatch || !paramsMatch) {
-      result.error = "missing js vars";
-      return res.end(JSON.stringify(result));
-    }
-
-    const urlParams = JSON.parse(paramsMatch[1]);
-    const body = { ...urlParams, type: typeMatch[1], hash: hashMatch[1], id: idMatch[1] };
-    result.step2_extracted = { type: typeMatch[1], id: idMatch[1], hash: hashMatch[1].substring(0, 20) + "..." };
-    result.step2_params = Object.keys(body);
-
-    // Step 3: call kodik API
-    const apiUrl = `https://kodikplayer.com/ftor?${new URLSearchParams(body).toString()}`;
-    result.step3_api_url = apiUrl.substring(0, 80) + "...";
-
-    let apiResponse;
-    try {
-      apiResponse = await fetch(apiUrl, { referrer: "", referrerPolicy: "no-referrer" });
-      result.step3_status = apiResponse.status;
-      result.step3_content_type = apiResponse.headers.get("content-type");
-      const json = await apiResponse.json();
-      result.step3_keys = Object.keys(json);
-      result.step3_domain = json.domain;
-      result.step3_default = json.default;
-      result.step3_has_links = !!json.links;
-      if (json.links) {
-        result.step3_qualities = Object.keys(json.links);
-        result.step3_sample_src = json.links["720"]?.[0]?.src?.substring(0, 60);
-        result.step3_valid = true;
-      }
-    } catch (e) {
-      result.step3_error = e.message;
-    }
-
-    // Step 4: call KodikParser.getDirectLinks directly
-    try {
-      const links = await KodikParser.getDirectLinks(decodedSrc);
-      result.step4_links = !!links;
-      result.step4_qualities = links ? Object.keys(links).join(",") : "null";
-      if (links && links["720"] && links["720"][0]) {
-        result.step4_720_src = links["720"][0].src.substring(0, 80);
-      }
-    } catch (e) {
-      result.step4_error = e.message;
-    }
-
-    // Step 5: verify content-type check
-    try {
-      const body2 = { ...JSON.parse(paramsMatch[1]), type: typeMatch[1], hash: hashMatch[1], id: idMatch[1] };
-      const apiUrl2 = `https://kodikplayer.com/ftor?${new URLSearchParams(body2).toString()}`;
-      const apiRes2 = await fetch(apiUrl2, { referrer: "", referrerPolicy: "no-referrer" });
-      const ct = apiRes2.headers.get("content-type") || "";
-      result.step5_content_type_raw = ct;
-      result.step5_strict_check = ct === "application/json";
-      result.step5_includes = ct.includes("application/json");
-    } catch (e) {
-      result.step5_error = e.message;
-    }
-
-    res.setHeader("Content-Type", "application/json");
-    res.end(JSON.stringify(result, null, 2));
-  } catch (e) {
-    res.statusCode = 500;
-    res.end(JSON.stringify({ err: e.message }));
-  }
 }
 
 async function handlePlay(req, res) {
@@ -146,16 +47,12 @@ async function handlePlay(req, res) {
     res.setHeader("Content-Type", "application/vnd.apple.mpegurl");
     res.end(rewritten);
   } catch (e) {
-    console.error("play error:", e.message);
     res.statusCode = 500;
     res.end(JSON.stringify({ err: e.message }));
   }
 }
 
 module.exports = function (req, res) {
-  if (req.url.startsWith("/debug-play")) {
-    return handleDebug(req, res);
-  }
   if (req.url.startsWith("/play")) {
     return handlePlay(req, res);
   }
