@@ -1,0 +1,5 @@
+{
+  "version": 2,
+  "builds": [{ "src": "api/addon.ts", "use": "@vercel/node" }],
+  "routes": [{ "src": "/(.*)", "dest": "/api/addon" }]
+}

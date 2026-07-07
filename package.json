@@ -2,11 +2,12 @@
   "name": "anixio",
   "version": "1.0.0",
   "description": "Stremio/Nuvio addon using Anixart as anime metadata and video source",
-  "main": "dist/addon.js",
+  "main": "dist/server.js",
   "scripts": {
     "build": "tsc",
-    "start": "node dist/addon.js",
-    "dev": "tsx src/addon.ts"
+    "start": "node dist/server.js",
+    "dev": "tsx src/server.ts",
+    "vercel-build": "tsc"
   },
   "keywords": [
     "stremio",

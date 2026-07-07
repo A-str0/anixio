@@ -1,4 +1,4 @@
-import { addonBuilder, serveHTTP, getRouter } from "stremio-addon-sdk";
+import { addonBuilder } from "stremio-addon-sdk";
 import { catalogHandler } from "./catalog";
 import { metaHandler } from "./meta";
 import { streamHandler } from "./stream";
@@ -40,8 +40,4 @@ builder.defineCatalogHandler(catalogHandler);
 builder.defineMetaHandler(metaHandler);
 builder.defineStreamHandler(streamHandler);
 
-const port = parseInt(process.env.PORT || "7000", 10);
-
-serveHTTP(builder.getInterface(), { port, cacheMaxAge: 86400 });
-
-console.log(`Anixio addon running at http://localhost:${port}/manifest.json`);
+export const addonInterface = builder.getInterface();
