@@ -89,6 +89,19 @@ async function handleDebug(req, res) {
       result.step4_error = e.message;
     }
 
+    // Step 5: verify content-type check
+    try {
+      const body2 = { ...JSON.parse(paramsMatch[1]), type: typeMatch[1], hash: hashMatch[1], id: idMatch[1] };
+      const apiUrl2 = `https://kodikplayer.com/ftor?${new URLSearchParams(body2).toString()}`;
+      const apiRes2 = await fetch(apiUrl2, { referrer: "", referrerPolicy: "no-referrer" });
+      const ct = apiRes2.headers.get("content-type") || "";
+      result.step5_content_type_raw = ct;
+      result.step5_strict_check = ct === "application/json";
+      result.step5_includes = ct.includes("application/json");
+    } catch (e) {
+      result.step5_error = e.message;
+    }
+
     res.setHeader("Content-Type", "application/json");
     res.end(JSON.stringify(result, null, 2));
   } catch (e) {
