@@ -1,0 +1,28 @@
+{
+  "name": "anixio",
+  "version": "1.0.0",
+  "description": "Stremio/Nuvio addon using Anixart as anime metadata and video source",
+  "main": "dist/addon.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/addon.js",
+    "dev": "tsx src/addon.ts"
+  },
+  "keywords": [
+    "stremio",
+    "addon",
+    "anime",
+    "anixart"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "anixapi": "^0.2.1",
+    "stremio-addon-sdk": "^1.6.10"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/stremio-addon-sdk": "^1.6.12",
+    "tsx": "^4.0.0",
+    "typescript": "^5.0.0"
+  }
+}
