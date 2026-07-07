@@ -5,13 +5,12 @@ import { resolveToAnixart } from "./resolve";
 
 const client = new Anixart({});
 
-function fixUrl(url: string): string {
-  if (url.startsWith("//")) return `https:${url}`;
-  return url;
+function needsProxy(url: string): boolean {
+  return url.includes("kodik") || url.includes("libria") || url.includes("anilibria");
 }
 
-function isExternalPlayer(url: string): boolean {
-  return url.includes("kodik");
+function proxyUrl(src: string): string {
+  return `/play?src=${encodeURIComponent(src)}`;
 }
 
 async function resolveStream(label: string, url: string): Promise<Stream | null> {
@@ -21,20 +20,17 @@ async function resolveStream(label: string, url: string): Promise<Stream | null>
     try {
       const directUrl = await SibnetParser.getDirectLink(url);
       if (directUrl) {
-        return { name: "Anixart", title: label, url: fixUrl(directUrl) };
+        const fixed = directUrl.startsWith("//") ? `https:${directUrl}` : directUrl;
+        return { name: "Anixart", title: label, url: fixed };
       }
     } catch {}
   }
 
-  if (isExternalPlayer(url)) {
-    return { name: "Anixart", title: label, externalUrl: url };
+  if (needsProxy(url)) {
+    return { name: "Anixart", title: label, url: proxyUrl(url) };
   }
 
-  if (url.includes("libria") || url.includes("anilibria")) {
-    return { name: "Anixart", title: label, externalUrl: url };
-  }
-
-  if (url.startsWith("//")) url = fixUrl(url);
+  if (url.startsWith("//")) url = `https:${url}`;
 
   return { name: "Anixart", title: label, url };
 }
@@ -105,7 +101,7 @@ export async function streamHandler(args: { type: ContentType; id: string }): Pr
           const stream = await resolveStream(labelWithEp, ep.url);
           if (!stream) continue;
 
-          const key = stream.url || stream.externalUrl || "";
+          const key = stream.url || "";
           if (seen.has(key)) continue;
           seen.add(key);
 
