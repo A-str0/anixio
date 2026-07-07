@@ -1,56 +1,67 @@
 import { Anixart } from "anixapi";
 import type { ContentType, Stream } from "stremio-addon-sdk";
-import { parseAnixartId } from "./utils";
+import { parseAnixartId, parseAnixartEpisodeId } from "./utils";
 
 const client = new Anixart({});
 
 export async function streamHandler(args: { type: ContentType; id: string }): Promise<{ streams: Stream[] }> {
-  const releaseId = parseAnixartId(args.id);
+  const episodeInfo = parseAnixartEpisodeId(args.id);
+  const releaseId = episodeInfo?.releaseId ?? parseAnixartId(args.id);
 
   if (!releaseId) {
     return { streams: [] };
   }
 
   try {
-    const seen = new Set<string>();
     const streams: Stream[] = [];
+    const seen = new Set<string>();
+    const targetEpisode = episodeInfo?.episode ?? null;
 
-    const addVideo = (video: any) => {
-      const key = video.url || video.player_url;
-      if (!key || seen.has(key)) return;
+    const typesResult = await client.endpoints.episode.types(releaseId);
+    const dubbers = typesResult.types || [];
 
-      const hosting = video.hosting?.name || "Anixart";
-      const title = video.title || "";
-      const label = title ? `${hosting} — ${title}` : hosting;
+    for (const dubber of dubbers) {
+      if (streams.length >= 200) break;
 
-      seen.add(key);
-
-      if (video.url) {
-        streams.push({ name: "Anixart", title: label, url: video.url });
+      let sourcesResult;
+      try {
+        sourcesResult = await client.endpoints.episode.sources(releaseId, dubber.id);
+      } catch {
+        continue;
       }
 
-      if (video.player_url && video.player_url !== video.url) {
-        streams.push({
-          name: "Anixart",
-          title: label + " (плеер)",
-          externalUrl: video.player_url,
-        });
+      const sources = sourcesResult.sources || [];
+
+      for (const source of sources) {
+        if (streams.length >= 200) break;
+
+        let episodesResult;
+        try {
+          episodesResult = await client.endpoints.episode.episodes(releaseId, dubber.id, source.id);
+        } catch {
+          continue;
+        }
+
+        const episodes = episodesResult.episodes || [];
+
+        for (const ep of episodes) {
+          if (targetEpisode !== null && ep.position !== targetEpisode) continue;
+          if (!ep.url || seen.has(ep.url)) continue;
+          if (streams.length >= 200) break;
+
+          seen.add(ep.url);
+
+          const title = ep.name
+            ? `${dubber.name} | ${source.name} — ${ep.name}`
+            : `${dubber.name} | ${source.name}`;
+
+          streams.push({
+            name: "Anixart",
+            title,
+            url: ep.url,
+          });
+        }
       }
-    };
-
-    try {
-      const main = await client.endpoints.releaseVideo.main(releaseId);
-      for (const v of main.blocks || []) addVideo(v);
-      for (const v of main.last_videos || []) addVideo(v);
-    } catch {
-      // main endpoint might fail for some releases
-    }
-
-    try {
-      const page0 = await client.endpoints.releaseVideo.video(releaseId, 0);
-      for (const v of page0.content || []) addVideo(v);
-    } catch {
-      // paginated endpoint might fail
     }
 
     return { streams };
