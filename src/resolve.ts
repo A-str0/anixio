@@ -10,6 +10,7 @@ interface CinemetaMeta {
     name: string;
     year?: string;
     type?: string;
+    releaseInfo?: string;
   };
 }
 
@@ -23,27 +24,56 @@ function parseImdbId(id: string): { baseId: string; episode?: number; season?: n
   };
 }
 
-async function fetchCinemetaTitle(type: ContentType, imdbId: string): Promise<string | null> {
+async function fetchCinemetaMeta(type: ContentType, imdbId: string): Promise<{ name: string; year: number | null } | null> {
   try {
     const url = `${CINEMETA_BASE}/meta/${type}/${imdbId}.json`;
     const resp = await fetch(url);
     if (!resp.ok) return null;
     const data = (await resp.json()) as CinemetaMeta;
-    return data.meta?.name || null;
+    const name = data.meta?.name;
+    if (!name) return null;
+    const year = data.meta?.year || data.meta?.releaseInfo || null;
+    return { name, year: year ? parseInt(year, 10) || null : null };
   } catch {
     return null;
   }
 }
 
-async function searchAnixart(query: string): Promise<number | null> {
+function normalizeTitle(t: string): string {
+  return t.toLowerCase().replace(/[^a-zа-яё0-9]/g, "");
+}
+
+function titlesMatch(a: string, b: string): boolean {
+  const na = normalizeTitle(a);
+  const nb = normalizeTitle(b);
+  if (na === nb) return true;
+  if (na.length > 3 && nb.includes(na)) return true;
+  if (nb.length > 3 && na.includes(nb)) return true;
+  return false;
+}
+
+async function findAnixartRelease(title: string, year: number | null): Promise<number | null> {
   try {
-    const result = await client.call<any, any>({
-      path: "/search/releases/0",
-      method: "POST",
-      json: { query, searchBy: 0, page: 1 },
-    });
-    if (!result.content || result.content.length === 0) return null;
-    return result.content[0].id as number;
+    for (let page = 0; page < 5; page++) {
+      const body: any = { sort: 3 };
+      if (year) {
+        body.start_year = year;
+        body.end_year = year;
+      }
+      const result = await client.call<any, any>({
+        path: `/filter/${page}`,
+        method: "POST",
+        json: body,
+      });
+      if (!result.content || result.content.length === 0) break;
+      for (const r of result.content) {
+        const names = [r.title_ru, r.title_original, r.title_alt].filter(Boolean);
+        for (const n of names) {
+          if (titlesMatch(title, n)) return r.id;
+        }
+      }
+    }
+    return null;
   } catch {
     return null;
   }
@@ -51,19 +81,18 @@ async function searchAnixart(query: string): Promise<number | null> {
 
 function titleVariations(title: string): string[] {
   const parts = title.split(":");
-  const main = parts[0].trim();
-  return [...new Set([title, main])];
+  return [...new Set([title, parts[0].trim()])];
 }
 
 export async function resolveToAnixart(type: ContentType, id: string): Promise<number | null> {
   const parsed = parseImdbId(id);
   if (!parsed) return null;
 
-  const title = await fetchCinemetaTitle(type, parsed.baseId);
-  if (!title) return null;
+  const meta = await fetchCinemetaMeta(type, parsed.baseId);
+  if (!meta) return null;
 
-  for (const q of titleVariations(title)) {
-    const anixartId = await searchAnixart(q);
+  for (const q of titleVariations(meta.name)) {
+    const anixartId = await findAnixartRelease(q, meta.year);
     if (anixartId) return anixartId;
   }
 
