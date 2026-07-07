@@ -1,11 +1,14 @@
+const express = require("express");
 const { getRouter } = require("stremio-addon-sdk");
 const { addonInterface } = require("./dist/addon");
 
+const app = express();
 const router = getRouter(addonInterface);
 
-module.exports = (req, res) => {
-  router(req, res, () => {
-    res.statusCode = 404;
-    res.end(JSON.stringify({ err: "not found" }));
-  });
-};
+app.use(router);
+
+app.use((_req, res) => {
+  res.status(404).json({ err: "not found" });
+});
+
+module.exports = app;
