@@ -4,6 +4,7 @@ import type { ContentType } from "stremio-addon-sdk";
 const client = new Anixart({});
 
 const CINEMETA_BASE = "https://v3-cinemeta.strem.io";
+const ANIXART_API = "https://api.anixart.tv";
 
 interface CinemetaMeta {
   meta: {
@@ -26,40 +27,41 @@ function parseImdbId(id: string): { baseId: string; episode?: number; season?: n
 async function fetchCinemetaTitle(type: ContentType, imdbId: string): Promise<string | null> {
   try {
     const url = `${CINEMETA_BASE}/meta/${type}/${imdbId}.json`;
-    console.log("Anixio: fetching cinemeta", url);
     const resp = await fetch(url);
-    if (!resp.ok) {
-      console.log("Anixio: cinemeta not ok", resp.status);
-      return null;
-    }
+    if (!resp.ok) return null;
     const data = (await resp.json()) as CinemetaMeta;
-    const name = data.meta?.name || null;
-    console.log("Anixio: cinemeta title", name);
-    return name;
-  } catch (err) {
-    console.log("Anixio: cinemeta error", String(err));
+    return data.meta?.name || null;
+  } catch {
     return null;
   }
 }
 
-async function searchAnixartByName(query: string): Promise<number | null> {
+async function directSearch(query: string): Promise<number | null> {
   try {
-    const result = await client.endpoints.search.releaseSearch(0, {
-      query,
-      searchBy: 0,
-      page: 1,
+    const url = `${ANIXART_API}/search/releases/0`;
+    const resp = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ query, searchBy: 0, page: 1 }),
     });
-    if (!result.content || result.content.length === 0) {
-      console.log("Anixio: search no results for", query);
-      return null;
-    }
-    const id = result.content[0].id;
-    console.log("Anixio: search found", id, "for", query);
-    return id;
-  } catch (err) {
-    console.log("Anixio: search error", String(err));
+    if (!resp.ok) return null;
+    const data: any = await resp.json();
+    if (!data.content || data.content.length === 0) return null;
+    return data.content[0].id;
+  } catch {
     return null;
   }
+}
+
+function titleVariations(title: string): string[] {
+  const parts = title.split(":");
+  const main = parts[0].trim();
+  const variations = [
+    title,
+    main,
+    ...parts.slice(0, 2).map((p) => p.trim()),
+  ];
+  return [...new Set(variations.filter((v) => v.length > 0))];
 }
 
 export async function resolveToAnixart(type: ContentType, id: string): Promise<number | null> {
@@ -69,6 +71,10 @@ export async function resolveToAnixart(type: ContentType, id: string): Promise<n
   const title = await fetchCinemetaTitle(type, parsed.baseId);
   if (!title) return null;
 
-  const anixartId = await searchAnixartByName(title);
-  return anixartId;
+  for (const q of titleVariations(title)) {
+    const anixartId = await directSearch(q);
+    if (anixartId) return anixartId;
+  }
+
+  return null;
 }
