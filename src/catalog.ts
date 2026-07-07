@@ -1,8 +1,30 @@
-import { Anixart, FilterSortType } from "anixapi";
-import type { Args } from "stremio-addon-sdk";
-import { toMetaPreview } from "./utils";
+import type { Args, MetaPreview } from "stremio-addon-sdk";
+import { fetchJson } from "./fetch";
 
-const client = new Anixart({});
+const CINEMETA_BASE = "https://v3-cinemeta.strem.io";
+
+interface CinemetaMeta extends MetaPreview {
+  genres?: string[];
+}
+
+interface CinemetaCatalog {
+  metas: CinemetaMeta[];
+}
+
+const ANIME_GENRES = new Set([
+  "Animation", "Anime", "Action", "Adventure", "Fantasy",
+  "Sci-Fi", "Science Fiction", "Horror", "Comedy", "Drama",
+  "Romance", "Thriller", "Mystery",
+]);
+
+function hasAnimeGenres(genres: string[] | undefined): boolean {
+  if (!genres || genres.length === 0) return false;
+  return genres.some((g) => ANIME_GENRES.has(g));
+}
+
+function filterAnime(metas: CinemetaMeta[]): CinemetaMeta[] {
+  return metas.filter((m) => hasAnimeGenres(m.genres));
+}
 
 export async function catalogHandler(args: Args) {
   const { type, id, extra } = args;
@@ -12,73 +34,30 @@ export async function catalogHandler(args: Args) {
   }
 
   const skip = extra.skip || 0;
-  const page = Math.floor(skip / 30);
   const search = extra.search as string | undefined;
 
   try {
-    let releases: any[] = [];
+    if (id.startsWith("cinemeta_")) {
+      const cinemetaId = id.replace("cinemeta_", "");
+      const url = `${CINEMETA_BASE}/catalog/${type}/${cinemetaId}.json?skip=${skip}`;
+      const data = await fetchJson<CinemetaCatalog>(url);
+      if (!data) return { metas: [] };
 
-    if (search) {
-      releases = await searchReleases(search, page);
-    } else {
-      releases = await fetchCatalog(id, page);
+      let metas: CinemetaMeta[] = data.metas || [];
+
+      if (search) {
+        const q = search.toLowerCase();
+        metas = metas.filter((m) => m.name.toLowerCase().includes(q));
+      }
+
+      metas = filterAnime(metas);
+
+      return { metas };
     }
 
-    const metas = releases.map(toMetaPreview);
-    return { metas };
+    return { metas: [] };
   } catch (err) {
     console.error("Catalog error:", err);
     return { metas: [] };
-  }
-}
-
-async function searchReleases(query: string, page: number) {
-  const result = await client.endpoints.search.releaseSearch(page, {
-    query,
-    searchBy: 0,
-    page: page + 1,
-  });
-  return result.content || [];
-}
-
-async function fetchCatalog(id: string, page: number) {
-  switch (id) {
-    case "anixart_popular": {
-      const result = await client.endpoints.filter.filter(page, {
-        sort: FilterSortType.SortPopular,
-      });
-      return result.content || [];
-    }
-    case "anixart_ongoing": {
-      const result = await client.endpoints.filter.filter(page, {
-        status_id: 2,
-        sort: FilterSortType.SortPopular,
-      });
-      return result.content || [];
-    }
-    case "anixart_latest": {
-      const result = await client.endpoints.filter.filter(page, {
-        sort: FilterSortType.SortDateUpdate,
-      });
-      return result.content || [];
-    }
-    case "anixart_announce": {
-      const result = await client.endpoints.filter.filter(page, {
-        status_id: 3,
-        sort: FilterSortType.SortPopular,
-      });
-      return result.content || [];
-    }
-    default: {
-      if (id.startsWith("anixart_genre_")) {
-        const genreId = id.replace("anixart_genre_", "");
-        const result = await client.endpoints.filter.filter(page, {
-          genres: [genreId],
-          sort: FilterSortType.SortPopular,
-        });
-        return result.content || [];
-      }
-      return [];
-    }
   }
 }

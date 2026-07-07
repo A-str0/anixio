@@ -71,11 +71,18 @@ export async function streamHandler(args: { type: ContentType; id: string }): Pr
             ? `${dubber.name} | ${source.name} — ${ep.name}`
             : `${dubber.name} | ${source.name}`;
 
-          streams.push({
+          const stream: Stream = {
             name: "Anixart",
             title,
-            url: ep.url,
-          });
+          };
+
+          if (ep.iframe) {
+            stream.externalUrl = ep.url;
+          } else {
+            stream.url = ep.url;
+          }
+
+          streams.push(stream);
         }
       }
     }
