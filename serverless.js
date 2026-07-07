@@ -11,7 +11,39 @@ function setCors(res) {
   res.setHeader("Access-Control-Allow-Headers", "*");
 }
 
-async function handlePlay(req, res) {
+async function handleDebug(req, res) {
+  setCors(res);
+  try {
+    const parsed = url.parse(req.url, true);
+    const src = parsed.query.src;
+    if (!src) { res.statusCode = 400; return res.end("missing src"); }
+
+    const decodedSrc = decodeURIComponent(src);
+    const pageResponse = await fetch(decodedSrc);
+    const html = await pageResponse.text();
+
+    const hashMatch = html.match(/\w+\.hash\s=\s'(.*?)';/i);
+    const idMatch = html.match(/\w+\.id\s=\s'(.*?)';/i);
+    const typeMatch = html.match(/\w+\.type\s=\s'(.*?)';/i);
+    const paramsMatch = html.match(/var\surlParams\s=\s'(.*?)';/i);
+    const statusMatch = html.match(/<title>(.*?)<\/title>/i);
+
+    res.setHeader("Content-Type", "application/json");
+    res.end(JSON.stringify({
+      status: pageResponse.status,
+      title: statusMatch ? statusMatch[1] : "none",
+      length: html.length,
+      hasHash: !!hashMatch,
+      hasId: !!idMatch,
+      hasType: !!typeMatch,
+      hasParams: !!paramsMatch,
+      snippet: html.substring(0, 500),
+    }));
+  } catch (e) {
+    res.statusCode = 500;
+    res.end(JSON.stringify({ err: e.message }));
+  }
+}
   setCors(res);
 
   if (req.method === "OPTIONS") {
@@ -55,6 +87,9 @@ async function handlePlay(req, res) {
 }
 
 module.exports = function (req, res) {
+  if (req.url.startsWith("/debug-play")) {
+    return handleDebug(req, res);
+  }
   if (req.url.startsWith("/play")) {
     return handlePlay(req, res);
   }
