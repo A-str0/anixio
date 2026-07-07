@@ -2,9 +2,17 @@
   "version": 2,
   "builds": [
     {
-      "src": "index.ts",
+      "src": "api/index.js",
       "use": "@vercel/node",
       "config": { "includeFiles": "dist/**" }
     }
+  ],
+  "routes": [
+    { "src": "/manifest.json", "dest": "/api/index" },
+    { "src": "/catalog/(.*)", "dest": "/api/index" },
+    { "src": "/meta/(.*)", "dest": "/api/index" },
+    { "src": "/stream/(.*)", "dest": "/api/index" },
+    { "src": "/configure", "dest": "/api/index" },
+    { "src": "/(.*)", "dest": "/api/index" }
   ]
 }
