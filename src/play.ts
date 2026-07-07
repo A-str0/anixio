@@ -16,9 +16,11 @@ export async function resolveM3u8Url(sourceUrl: string): Promise<ResolvedM3u8 | 
     }
 
     if (sourceUrl.includes("kodik")) {
-      console.error("resolving kodik:", sourceUrl.substring(0, 60));
       const links = await KodikParser.getDirectLinks(sourceUrl);
-      console.error("kodik links:", links ? Object.keys(links).join(",") : "null");
+      if (!links) {
+        console.error("kodik getDirectLinks returned null for:", sourceUrl.substring(0, 60));
+        return null;
+      }
       if (!links) return null;
 
       for (const q of QUALITY_ORDER) {

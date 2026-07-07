@@ -19,29 +19,65 @@ async function handleDebug(req, res) {
     if (!src) { res.statusCode = 400; return res.end("missing src"); }
 
     const decodedSrc = decodeURIComponent(src);
-    const pageResponse = await fetch(decodedSrc);
-    const html = await pageResponse.text();
+    const result = { step1: "ok" };
 
+    // Step 1: fetch player page
+    let pageResponse, html;
+    try {
+      pageResponse = await fetch(decodedSrc);
+      html = await pageResponse.text();
+      result.step1_status = pageResponse.status;
+      result.step1_len = html.length;
+    } catch (e) {
+      result.step1_error = e.message;
+      return res.end(JSON.stringify(result));
+    }
+
+    // Step 2: extract video info
     const hashMatch = html.match(/\w+\.hash\s=\s'(.*?)';/i);
     const idMatch = html.match(/\w+\.id\s=\s'(.*?)';/i);
     const typeMatch = html.match(/\w+\.type\s=\s'(.*?)';/i);
     const paramsMatch = html.match(/var\surlParams\s=\s'(.*?)';/i);
-    const titleMatch = html.match(/<title>(.*?)<\/title>/i);
+    result.has_hash = !!hashMatch;
+    result.has_id = !!idMatch;
+    result.has_type = !!typeMatch;
+    result.has_params = !!paramsMatch;
+
+    if (!hashMatch || !idMatch || !typeMatch || !paramsMatch) {
+      result.error = "missing js vars";
+      return res.end(JSON.stringify(result));
+    }
+
+    const urlParams = JSON.parse(paramsMatch[1]);
+    const body = { ...urlParams, type: typeMatch[1], hash: hashMatch[1], id: idMatch[1] };
+    result.step2_extracted = { type: typeMatch[1], id: idMatch[1], hash: hashMatch[1].substring(0, 20) + "..." };
+    result.step2_params = Object.keys(body);
+
+    // Step 3: call kodik API
+    const apiUrl = `https://kodikplayer.com/ftor?${new URLSearchParams(body).toString()}`;
+    result.step3_api_url = apiUrl.substring(0, 80) + "...";
+
+    let apiResponse;
+    try {
+      apiResponse = await fetch(apiUrl, { referrer: "", referrerPolicy: "no-referrer" });
+      result.step3_status = apiResponse.status;
+      result.step3_content_type = apiResponse.headers.get("content-type");
+      const json = await apiResponse.json();
+      result.step3_keys = Object.keys(json);
+      result.step3_domain = json.domain;
+      result.step3_default = json.default;
+      result.step3_has_links = !!json.links;
+      if (json.links) {
+        result.step3_qualities = Object.keys(json.links);
+        result.step3_sample_src = json.links["720"]?.[0]?.src?.substring(0, 60);
+        result.step3_valid = true;
+      }
+    } catch (e) {
+      result.step3_error = e.message;
+    }
 
     res.setHeader("Content-Type", "application/json");
-    res.end(JSON.stringify({
-      status: pageResponse.status,
-      title: titleMatch ? titleMatch[1] : "none",
-      length: html.length,
-      snippet: html.substring(0, 500),
-      hasHash: !!hashMatch,
-      hasId: !!idMatch,
-      hasType: !!typeMatch,
-      hasParams: !!paramsMatch,
-      hash: hashMatch ? hashMatch[1] : null,
-      vidId: idMatch ? idMatch[1] : null,
-      vidType: typeMatch ? typeMatch[1] : null,
-    }));
+    res.end(JSON.stringify(result, null, 2));
   } catch (e) {
     res.statusCode = 500;
     res.end(JSON.stringify({ err: e.message }));
