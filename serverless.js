@@ -2,6 +2,7 @@ const { getRouter } = require("stremio-addon-sdk");
 const { addonInterface } = require("./dist/addon");
 const url = require("url");
 const { resolveM3u8Url, rewriteManifest } = require("./dist/play");
+const { KodikParser } = require("anixapi");
 
 const router = getRouter(addonInterface);
 
@@ -74,6 +75,18 @@ async function handleDebug(req, res) {
       }
     } catch (e) {
       result.step3_error = e.message;
+    }
+
+    // Step 4: call KodikParser.getDirectLinks directly
+    try {
+      const links = await KodikParser.getDirectLinks(decodedSrc);
+      result.step4_links = !!links;
+      result.step4_qualities = links ? Object.keys(links).join(",") : "null";
+      if (links && links["720"] && links["720"][0]) {
+        result.step4_720_src = links["720"][0].src.substring(0, 80);
+      }
+    } catch (e) {
+      result.step4_error = e.message;
     }
 
     res.setHeader("Content-Type", "application/json");
