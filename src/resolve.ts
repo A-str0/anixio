@@ -108,7 +108,7 @@ function scoreRelease(
 async function findAllCandidates(query: string, year: number | null): Promise<any[]> {
   const candidates: any[] = [];
   try {
-    for (let page = 0; page < 8; page++) {
+    for (let page = 0; page < 3; page++) {
       const body: any = { sort: 3 };
       if (year) {
         // Widen year range for sequels
