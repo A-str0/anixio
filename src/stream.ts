@@ -54,7 +54,7 @@ async function resolveStream(label: string, sourceUrl: string): Promise<Stream |
           const encoded = Buffer.from(JSON.stringify({ url: source.src, type: "libria" })).toString("base64url");
           return {
             name: "Anixart",
-            title: `${label} (${q}p) — proxied, uses server bandwidth`,
+            title: `${label} (${q}p) — CONSUMES SIGNIFICANT BANDWIDTH`,
             url: `/play?m=${encoded}`,
           };
         }
