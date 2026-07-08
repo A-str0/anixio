@@ -1,7 +1,7 @@
 import * as http from "http";
 import { getRouter } from "stremio-addon-sdk";
 import { addonInterface } from "./addon";
-import { resolveM3u8Url, rewriteManifest } from "./play";
+import { rewriteManifest } from "./play";
 
 const port = parseInt(process.env.PORT || "7000", 10);
 const router = getRouter(addonInterface);
@@ -14,8 +14,7 @@ function setCors(res: http.ServerResponse) {
 
 function getQueryParam(req: http.IncomingMessage, name: string): string | null {
   try {
-    const urlObj = new URL(req.url || "/", "http://localhost");
-    return urlObj.searchParams.get(name);
+    return new URL(req.url || "/", "http://localhost").searchParams.get(name);
   } catch {
     return null;
   }
@@ -23,34 +22,24 @@ function getQueryParam(req: http.IncomingMessage, name: string): string | null {
 
 async function handlePlay(req: http.IncomingMessage, res: http.ServerResponse) {
   setCors(res);
-
-  if (req.method === "OPTIONS") {
-    res.writeHead(204);
-    return res.end();
-  }
+  if (req.method === "OPTIONS") { res.writeHead(204); return res.end(); }
 
   try {
-    const src = getQueryParam(req, "src");
-    if (!src) {
-      res.writeHead(400);
-      return res.end(JSON.stringify({ err: "missing src param" }));
-    }
+    const m = getQueryParam(req, "m");
+    if (!m) { res.writeHead(400); return res.end(JSON.stringify({ err: "missing m" })); }
 
-    const decodedSrc = decodeURIComponent(src);
-    const m3u8 = await resolveM3u8Url(decodedSrc);
-    if (!m3u8) {
-      res.writeHead(502);
-      return res.end(JSON.stringify({ err: "failed to resolve stream" }));
-    }
+    let data;
+    try { data = JSON.parse(Buffer.from(m, "base64url").toString("utf-8")); }
+    catch { res.writeHead(400); return res.end(JSON.stringify({ err: "invalid m" })); }
 
-    const response = await fetch(m3u8.url);
-    if (!response.ok) {
-      res.writeHead(502);
-      return res.end(JSON.stringify({ err: "source unreachable" }));
-    }
+    if (!data.url) { res.writeHead(400); return res.end(JSON.stringify({ err: "no url" })); }
 
-    const m3u8Content = await response.text();
-    const rewritten = rewriteManifest(m3u8Content, m3u8.cdnBase);
+    const resp = await fetch(data.url);
+    if (!resp.ok) { res.writeHead(502); return res.end(JSON.stringify({ err: "unreachable" })); }
+
+    const content = await resp.text();
+    const baseUrl = data.url.substring(0, data.url.lastIndexOf("/") + 1);
+    const rewritten = rewriteManifest(content, baseUrl);
 
     res.setHeader("Content-Type", "application/vnd.apple.mpegurl");
     res.end(rewritten);
@@ -61,9 +50,7 @@ async function handlePlay(req: http.IncomingMessage, res: http.ServerResponse) {
 }
 
 const server = http.createServer((req, res) => {
-  if (req.url?.startsWith("/play")) {
-    return handlePlay(req, res);
-  }
+  if (req.url?.startsWith("/play")) return handlePlay(req, res);
 
   router(req, res, () => {
     res.writeHead(404);

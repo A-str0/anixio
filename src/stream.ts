@@ -1,38 +1,59 @@
-import { Anixart, SibnetParser } from "anixapi";
+import { Anixart, KodikParser, AniLibriaParser, SibnetParser } from "anixapi";
 import type { ContentType, Stream } from "stremio-addon-sdk";
 import { parseAnixartId, parseAnixartEpisodeId } from "./utils";
 import { resolveToAnixart } from "./resolve";
 
 const client = new Anixart({});
 
-function needsProxy(url: string): boolean {
-  return url.includes("kodik") || url.includes("libria") || url.includes("anilibria");
-}
-
-function proxyUrl(src: string): string {
-  return `/play?src=${encodeURIComponent(src)}`;
-}
-
-async function resolveStream(label: string, url: string): Promise<Stream | null> {
-  if (!url) return null;
-
-  if (url.includes("sibnet")) {
-    try {
+async function resolveDirectM3u8(label: string, url: string): Promise<Stream | null> {
+  try {
+    if (url.includes("sibnet")) {
       const directUrl = await SibnetParser.getDirectLink(url);
-      if (directUrl) {
-        const fixed = directUrl.startsWith("//") ? `https:${directUrl}` : directUrl;
-        return { name: "Anixart", title: label, url: fixed };
+      if (directUrl) return { name: "Anixart", title: label, url: directUrl };
+      return null;
+    }
+
+    if (url.includes("kodik")) {
+      const links = await KodikParser.getDirectLinks(url);
+      if (!links) return null;
+
+      for (const q of ["720", "480", "360", "240"]) {
+        const sources = links[q];
+        if (sources && sources.length > 0) {
+          const m3u8Url = sources[0].src;
+          const encoded = Buffer.from(JSON.stringify({ url: m3u8Url })).toString("base64url");
+          return {
+            name: "Anixart",
+            title: `${label} (${q}p)`,
+            url: `/play?m=${encoded}`,
+          };
+        }
       }
-    } catch {}
+      return null;
+    }
+
+    if (url.includes("libria") || url.includes("anilibria")) {
+      const links = await AniLibriaParser.getDirectLinks(url);
+      if (!links) return null;
+
+      for (const q of ["1080", "720", "480"]) {
+        const source = links[q];
+        if (source && source.src) {
+          const encoded = Buffer.from(JSON.stringify({ url: source.src })).toString("base64url");
+          return {
+            name: "Anixart",
+            title: `${label} (${q}p)`,
+            url: `/play?m=${encoded}`,
+          };
+        }
+      }
+      return null;
+    }
+
+    return null;
+  } catch {
+    return null;
   }
-
-  if (needsProxy(url)) {
-    return { name: "Anixart", title: label, url: proxyUrl(url) };
-  }
-
-  if (url.startsWith("//")) url = `https:${url}`;
-
-  return { name: "Anixart", title: label, url };
 }
 
 export async function streamHandler(args: { type: ContentType; id: string }): Promise<{ streams: Stream[] }> {
@@ -54,9 +75,7 @@ export async function streamHandler(args: { type: ContentType; id: string }): Pr
     }
   }
 
-  if (!releaseId) {
-    return { streams: [] };
-  }
+  if (!releaseId) return { streams: [] };
 
   try {
     const streams: Stream[] = [];
@@ -67,7 +86,7 @@ export async function streamHandler(args: { type: ContentType; id: string }): Pr
     const dubbers = typesResult.types || [];
 
     for (const dubber of dubbers) {
-      if (streams.length >= 200) break;
+      if (streams.length >= 50) break;
 
       let sourcesResult;
       try {
@@ -79,7 +98,7 @@ export async function streamHandler(args: { type: ContentType; id: string }): Pr
       const sources = sourcesResult.sources || [];
 
       for (const source of sources) {
-        if (streams.length >= 200) break;
+        if (streams.length >= 50) break;
 
         let episodesResult;
         try {
@@ -93,19 +112,18 @@ export async function streamHandler(args: { type: ContentType; id: string }): Pr
         for (const ep of episodes) {
           if (targetEpisode !== null && ep.position !== targetEpisode) continue;
           if (!ep.url) continue;
-          if (streams.length >= 200) break;
+          if (streams.length >= 50) break;
 
           const baseLabel = `${dubber.name} | ${source.name}`;
           const labelWithEp = ep.name ? `${baseLabel} — ${ep.name}` : baseLabel;
 
-          const stream = await resolveStream(labelWithEp, ep.url);
-          if (!stream) continue;
+          if (seen.has(ep.url)) continue;
+          seen.add(ep.url);
 
-          const key = stream.url || "";
-          if (seen.has(key)) continue;
-          seen.add(key);
-
-          streams.push(stream);
+          const resolved = await resolveDirectM3u8(labelWithEp, ep.url);
+          if (resolved) {
+            streams.push(resolved);
+          }
         }
       }
     }

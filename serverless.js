@@ -1,6 +1,6 @@
 const { getRouter } = require("stremio-addon-sdk");
 const { addonInterface } = require("./dist/addon");
-const { resolveM3u8Url, rewriteManifest } = require("./dist/play");
+const { rewriteManifest } = require("./dist/play");
 
 const router = getRouter(addonInterface);
 
@@ -12,8 +12,7 @@ function setCors(res) {
 
 function getQueryParam(req, name) {
   try {
-    const urlObj = new URL(req.url, "http://localhost");
-    return urlObj.searchParams.get(name);
+    return new URL(req.url, "http://localhost").searchParams.get(name);
   } catch {
     return null;
   }
@@ -21,34 +20,24 @@ function getQueryParam(req, name) {
 
 async function handlePlay(req, res) {
   setCors(res);
-
-  if (req.method === "OPTIONS") {
-    res.statusCode = 204;
-    return res.end();
-  }
+  if (req.method === "OPTIONS") { res.statusCode = 204; return res.end(); }
 
   try {
-    const src = getQueryParam(req, "src");
-    if (!src) {
-      res.statusCode = 400;
-      return res.end(JSON.stringify({ err: "missing src param" }));
-    }
+    const m = getQueryParam(req, "m");
+    if (!m) { res.statusCode = 400; return res.end(JSON.stringify({ err: "missing m" })); }
 
-    const decodedSrc = decodeURIComponent(src);
-    const m3u8 = await resolveM3u8Url(decodedSrc);
-    if (!m3u8) {
-      res.statusCode = 502;
-      return res.end(JSON.stringify({ err: "failed to resolve stream" }));
-    }
+    let data;
+    try { data = JSON.parse(Buffer.from(m, "base64url").toString("utf-8")); }
+    catch { res.statusCode = 400; return res.end(JSON.stringify({ err: "invalid m" })); }
 
-    const response = await fetch(m3u8.url);
-    if (!response.ok) {
-      res.statusCode = 502;
-      return res.end(JSON.stringify({ err: "source unreachable" }));
-    }
+    if (!data.url) { res.statusCode = 400; return res.end(JSON.stringify({ err: "no url" })); }
 
-    const m3u8Content = await response.text();
-    const rewritten = rewriteManifest(m3u8Content, m3u8.cdnBase);
+    const resp = await fetch(data.url);
+    if (!resp.ok) { res.statusCode = 502; return res.end(JSON.stringify({ err: "unreachable" })); }
+
+    const content = await resp.text();
+    const baseUrl = data.url.substring(0, data.url.lastIndexOf("/") + 1);
+    const rewritten = rewriteManifest(content, baseUrl);
 
     res.setHeader("Content-Type", "application/vnd.apple.mpegurl");
     res.end(rewritten);
@@ -59,9 +48,7 @@ async function handlePlay(req, res) {
 }
 
 module.exports = function (req, res) {
-  if (req.url.startsWith("/play")) {
-    return handlePlay(req, res);
-  }
+  if (req.url.startsWith("/play")) return handlePlay(req, res);
 
   router(req, res, function () {
     res.statusCode = 404;
