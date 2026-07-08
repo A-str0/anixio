@@ -6,8 +6,7 @@
   "scripts": {
     "build": "tsc",
     "start": "node dist/server.js",
-    "dev": "tsx src/server.ts",
-    "vercel-build": "tsc"
+    "dev": "tsx src/server.ts"
   },
   "keywords": [
     "stremio",
@@ -18,7 +17,6 @@
   "license": "MIT",
   "dependencies": {
     "anixapi": "^0.2.1",
-    "express": "^5.2.1",
     "stremio-addon-sdk": "^1.6.10"
   },
   "devDependencies": {

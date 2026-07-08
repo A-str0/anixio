@@ -1,11 +1,21 @@
 function unwrapCdnUrl(url: string): string {
-  const match = url.match(/^(https?:\/\/[^/]+)\/s\/m\/([A-Za-z0-9+/=]+)\/(.+)$/);
-  if (!match) return url;
+  const proxyMatch = url.match(/^(https?:\/\/[^/]+)\/s\/m\/(.+)$/);
+  if (!proxyMatch) return url;
 
+  const host = proxyMatch[1];
+  const rest = proxyMatch[2];
+
+  const parts = rest.split("/");
+  if (parts.length < 3) return url;
+
+  const segment = parts.pop()!;
+  const token = parts.pop()!;
+
+  const encoded = parts.join("/");
   try {
-    const decoded = Buffer.from(match[2], "base64").toString("utf-8");
+    const decoded = Buffer.from(encoded, "base64").toString("utf-8");
     if (decoded.startsWith("http://") || decoded.startsWith("https://")) {
-      return `${decoded}/${match[3]}`;
+      return `${decoded}/${token}/${segment}`;
     }
   } catch {}
 

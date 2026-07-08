@@ -1,9 +1,0 @@
-{
-  "version": 2,
-  "builds": [
-    { "src": "serverless.js", "use": "@vercel/node", "config": { "includeFiles": "dist/**" } }
-  ],
-  "routes": [
-    { "src": "/(.*)", "dest": "/serverless.js" }
-  ]
-}
