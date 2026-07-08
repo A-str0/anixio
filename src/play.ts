@@ -41,7 +41,14 @@ async function resolveKodik(sourceUrl: string): Promise<ResolvedM3u8 | null> {
 
     const apiUrl = `https://kodikplayer.com/ftor?${params.toString()}`;
     const apiResp = await fetch(apiUrl, { referrer: "", referrerPolicy: "no-referrer" });
-    const json: any = await apiResp.json();
+    const apiText = await apiResp.text();
+    let json: any;
+    try {
+      json = JSON.parse(apiText);
+    } catch {
+      console.error("resolveKodik api json parse failed, content-type:", apiResp.headers.get("content-type"), "preview:", apiText.substring(0, 200));
+      return null;
+    }
 
     if (!json.links) return null;
 
