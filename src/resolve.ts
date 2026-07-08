@@ -39,26 +39,81 @@ async function fetchCinemetaMeta(type: ContentType, imdbId: string): Promise<{ n
   }
 }
 
-function normalizeTitle(t: string): string {
+function normalize(t: string): string {
   return t.toLowerCase().replace(/[^a-zа-яё0-9]/g, "");
 }
 
-function titlesMatch(a: string, b: string): boolean {
-  const na = normalizeTitle(a);
-  const nb = normalizeTitle(b);
-  if (na === nb) return true;
-  if (na.length > 3 && nb.includes(na)) return true;
-  if (nb.length > 3 && na.includes(nb)) return true;
-  return false;
+function seasonPattern(season: number | undefined): RegExp | null {
+  if (!season || season <= 1) return null;
+  return new RegExp(
+    `(?:^|[^a-zа-яё0-9])${season}(?:$|[^a-zа-яё0-9])|` +
+    `season\\s*${season}|` +
+    `${season}(?:nd|rd|th|й|я|е)`,
+    "i"
+  );
 }
 
-async function findAnixartRelease(title: string, year: number | null): Promise<number | null> {
+function scoreRelease(
+  searchTitle: string, 
+  release: any, 
+  season: number | undefined,
+  year: number | null
+): number {
+  let score = 0;
+  const sp = seasonPattern(season);
+  const names: string[] = [release.title_ru, release.title_original, release.title_alt].filter(Boolean);
+
+  for (const name of names) {
+    const nt = normalize(searchTitle);
+    const nr = normalize(name);
+
+    if (nt === nr) {
+      score = Math.max(score, 100);
+    } else if (nr.length >= nt.length && nr.includes(nt)) {
+      score = Math.max(score, 85);
+    } else if (nt.length >= nr.length && nt.includes(nr)) {
+      score = Math.max(score, 70);
+    } else {
+      // Partial match: search title words in release name
+      const searchWords = nt.split(/\s+/).filter((w: string) => w.length > 3);
+      const matched = searchWords.filter((w: string) => nr.includes(w));
+      if (matched.length >= searchWords.length * 0.7) {
+        score = Math.max(score, 50 + matched.length * 10);
+      }
+    }
+  }
+
+  // Season bonus
+  if (sp) {
+    for (const name of names) {
+      if (sp.test(name)) {
+        score += 40;
+        break;
+      }
+    }
+  }
+
+  // Year bonus: prefer matching year or close years for sequels
+  if (year && release.year) {
+    const releaseYear = parseInt(release.year, 10);
+    if (!isNaN(releaseYear)) {
+      if (releaseYear === year) score += 10;
+      else if (season && season > 1 && releaseYear > year) score += 15;
+    }
+  }
+
+  return score;
+}
+
+async function findAllCandidates(query: string, year: number | null): Promise<any[]> {
+  const candidates: any[] = [];
   try {
-    for (let page = 0; page < 5; page++) {
+    for (let page = 0; page < 8; page++) {
       const body: any = { sort: 3 };
       if (year) {
+        // Widen year range for sequels
         body.start_year = year;
-        body.end_year = year;
+        body.end_year = (year + 5);
       }
       const result = await client.call<any, any>({
         path: `/filter/${page}`,
@@ -66,17 +121,10 @@ async function findAnixartRelease(title: string, year: number | null): Promise<n
         json: body,
       });
       if (!result.content || result.content.length === 0) break;
-      for (const r of result.content) {
-        const names = [r.title_ru, r.title_original, r.title_alt].filter(Boolean);
-        for (const n of names) {
-          if (titlesMatch(title, n)) return r.id;
-        }
-      }
+      candidates.push(...result.content);
     }
-    return null;
-  } catch {
-    return null;
-  }
+  } catch {}
+  return candidates;
 }
 
 function titleVariations(title: string): string[] {
@@ -91,10 +139,20 @@ export async function resolveToAnixart(type: ContentType, id: string): Promise<n
   const meta = await fetchCinemetaMeta(type, parsed.baseId);
   if (!meta) return null;
 
+  const candidates = await findAllCandidates(meta.name, meta.year);
+
+  let bestId: number | null = null;
+  let bestScore = 0;
+
   for (const q of titleVariations(meta.name)) {
-    const anixartId = await findAnixartRelease(q, meta.year);
-    if (anixartId) return anixartId;
+    for (const r of candidates) {
+      const score = scoreRelease(q, r, parsed.season, meta.year);
+      if (score > bestScore) {
+        bestScore = score;
+        bestId = r.id;
+      }
+    }
   }
 
-  return null;
+  return bestScore >= 50 ? bestId : null;
 }
