@@ -5,35 +5,47 @@ import { resolveToAnixart } from "./resolve";
 
 const client = new Anixart({});
 
-async function resolveDirectM3u8(label: string, url: string): Promise<Stream | null> {
+function toDirectMp4(m3u8Url: string): string | null {
+  if (m3u8Url.includes(":hls:manifest.m3u8")) {
+    return m3u8Url.replace(/:hls:manifest\.m3u8$/, "");
+  }
+  if (m3u8Url.endsWith(".m3u8")) {
+    return m3u8Url.replace(/\.m3u8$/, ".mp4");
+  }
+  return null;
+}
+
+function fixUrl(url: string): string {
+  if (url.startsWith("//")) return `https:${url}`;
+  return url;
+}
+
+async function resolveStream(label: string, sourceUrl: string): Promise<Stream | null> {
   try {
-    if (url.includes("sibnet")) {
-      const directUrl = await SibnetParser.getDirectLink(url);
-      if (directUrl) return { name: "Anixart", title: label, url: directUrl };
+    if (sourceUrl.includes("sibnet")) {
+      const directUrl = await SibnetParser.getDirectLink(sourceUrl);
+      if (directUrl) return { name: "Anixart", title: label, url: fixUrl(directUrl) };
       return null;
     }
 
-    if (url.includes("kodik")) {
-      const links = await KodikParser.getDirectLinks(url);
+    if (sourceUrl.includes("kodik")) {
+      const links = await KodikParser.getDirectLinks(sourceUrl);
       if (!links) return null;
 
       for (const q of ["720", "480", "360", "240"]) {
         const sources = links[q];
         if (sources && sources.length > 0) {
-          const m3u8Url = sources[0].src;
-          const encoded = Buffer.from(JSON.stringify({ url: m3u8Url })).toString("base64url");
-          return {
-            name: "Anixart",
-            title: `${label} (${q}p)`,
-            url: `/play?m=${encoded}`,
-          };
+          const mp4Url = toDirectMp4(sources[0].src);
+          if (mp4Url) {
+            return { name: "Anixart", title: `${label} (${q}p)`, url: fixUrl(mp4Url) };
+          }
         }
       }
       return null;
     }
 
-    if (url.includes("libria") || url.includes("anilibria")) {
-      const links = await AniLibriaParser.getDirectLinks(url);
+    if (sourceUrl.includes("libria") || sourceUrl.includes("anilibria")) {
+      const links = await AniLibriaParser.getDirectLinks(sourceUrl);
       if (!links) return null;
 
       for (const q of ["1080", "720", "480"]) {
@@ -120,9 +132,9 @@ export async function streamHandler(args: { type: ContentType; id: string }): Pr
           if (seen.has(ep.url)) continue;
           seen.add(ep.url);
 
-          const resolved = await resolveDirectM3u8(labelWithEp, ep.url);
-          if (resolved) {
-            streams.push(resolved);
+          const stream = await resolveStream(labelWithEp, ep.url);
+          if (stream) {
+            streams.push(stream);
           }
         }
       }
