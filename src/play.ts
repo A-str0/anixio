@@ -42,3 +42,29 @@ export function rewriteManifest(m3u8Content: string, cdnBase: string): string {
 
   return rewritten.join("\n");
 }
+
+export function proxySegments(m3u8Content: string, cdnBase: string): string {
+  if (!cdnBase) return m3u8Content;
+
+  const lines = m3u8Content.split("\n");
+  const rewritten: string[] = [];
+
+  for (const line of lines) {
+    if (line.startsWith("#") || line.trim() === "") {
+      rewritten.push(line);
+    } else {
+      let absoluteUrl: string;
+      if (line.startsWith("http://") || line.startsWith("https://")) {
+        absoluteUrl = line;
+      } else if (line.startsWith("//")) {
+        absoluteUrl = `https:${line}`;
+      } else {
+        absoluteUrl = new URL(line, cdnBase).toString();
+      }
+      const proxyPath = `/seg?url=${encodeURIComponent(absoluteUrl)}`;
+      rewritten.push(proxyPath);
+    }
+  }
+
+  return rewritten.join("\n");
+}

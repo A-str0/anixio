@@ -1,7 +1,7 @@
 import * as http from "http";
 import { getRouter } from "stremio-addon-sdk";
 import { addonInterface } from "./addon";
-import { rewriteManifest } from "./play";
+import { rewriteManifest, proxySegments } from "./play";
 
 const port = parseInt(process.env.PORT || "7000", 10);
 const router = getRouter(addonInterface);
@@ -39,7 +39,9 @@ async function handlePlay(req: http.IncomingMessage, res: http.ServerResponse) {
 
     const content = await resp.text();
     const baseUrl = data.url.substring(0, data.url.lastIndexOf("/") + 1);
-    const rewritten = rewriteManifest(content, baseUrl);
+
+    const isProxied = data.type === "libria";
+    const rewritten = isProxied ? proxySegments(content, baseUrl) : rewriteManifest(content, baseUrl);
 
     res.setHeader("Content-Type", "application/vnd.apple.mpegurl");
     res.end(rewritten);
@@ -49,7 +51,32 @@ async function handlePlay(req: http.IncomingMessage, res: http.ServerResponse) {
   }
 }
 
+async function handleSeg(req: http.IncomingMessage, res: http.ServerResponse) {
+  setCors(res);
+  if (req.method === "OPTIONS") { res.writeHead(204); return res.end(); }
+
+  try {
+    const targetUrl = getQueryParam(req, "url");
+    if (!targetUrl) { res.writeHead(400); return res.end("missing url"); }
+
+    const resp = await fetch(targetUrl);
+    if (!resp.ok) { res.writeHead(502); return res.end("unreachable"); }
+
+    const ct = resp.headers.get("content-type") || "video/mp2t";
+    res.setHeader("Content-Type", ct);
+    res.setHeader("Content-Length", resp.headers.get("content-length") || "");
+    res.setHeader("Cache-Control", "public, max-age=3600");
+
+    const body = await resp.arrayBuffer();
+    res.end(Buffer.from(body));
+  } catch (e: any) {
+    res.writeHead(500);
+    res.end(e.message);
+  }
+}
+
 const server = http.createServer((req, res) => {
+  if (req.url?.startsWith("/seg")) return handleSeg(req, res);
   if (req.url?.startsWith("/play")) return handlePlay(req, res);
 
   router(req, res, () => {
