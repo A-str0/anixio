@@ -10,14 +10,18 @@ const QUALITY_ORDER = ["1080", "720", "480", "360", "240"];
 async function resolveKodik(sourceUrl: string): Promise<ResolvedM3u8 | null> {
   try {
     const pageResp = await fetch(sourceUrl);
+    if (!pageResp.ok) return null;
     const html = await pageResp.text();
 
-    const hashMatch = html.match(/\w+\.hash\s=\s'(.*?)';/i);
-    const idMatch = html.match(/\w+\.id\s=\s'(.*?)';/i);
-    const typeMatch = html.match(/\w+\.type\s=\s'(.*?)';/i);
-    const paramsMatch = html.match(/var\surlParams\s=\s'(.*?)';/i);
+    if (html.includes("страницы не существует") || html.includes("page could not be found")) return null;
 
-    if (!hashMatch || !idMatch || !typeMatch || !paramsMatch) return null;
+    const hashMatch = html.match(/(?:hash|videoInfo\.hash)\s*=\s*['"]([^'"]+)['"]/i);
+    const idMatch = html.match(/(?:videoId|id|videoInfo\.id)\s*=\s*['"]([^'"]+)['"]/i);
+    const paramsMatch = html.match(/(?:var\s+)?urlParams\s*=\s*'([^']*)'/i);
+
+    const videoType = sourceUrl.includes("/seria/") ? "seria" : "movie";
+
+    if (!hashMatch || !idMatch || !paramsMatch) return null;
 
     let urlParams: Record<string, string>;
     try {
@@ -29,7 +33,7 @@ async function resolveKodik(sourceUrl: string): Promise<ResolvedM3u8 | null> {
 
     const apiBody: Record<string, string> = {
       ...urlParams,
-      type: typeMatch[1],
+      type: videoType,
       hash: hashMatch[1],
       id: idMatch[1],
     };
@@ -41,19 +45,9 @@ async function resolveKodik(sourceUrl: string): Promise<ResolvedM3u8 | null> {
 
     const apiUrl = `https://kodikplayer.com/ftor?${params.toString()}`;
     const apiResp = await fetch(apiUrl, { referrer: "", referrerPolicy: "no-referrer" });
-    const apiText = await apiResp.text();
-    let json: any;
-    try {
-      json = JSON.parse(apiText);
-    } catch {
-      console.error("resolveKodik api json parse failed, content-type:", apiResp.headers.get("content-type"), "preview:", apiText.substring(0, 200));
-      return null;
-    }
+    const json: any = await apiResp.json();
 
-    if (!json.links) {
-      console.error("resolveKodik: no links in response, keys:", Object.keys(json).join(","));
-      return null;
-    }
+    if (!json.links) return null;
 
     const links: Record<string, { src: string }[]> = json.links;
 
@@ -84,10 +78,8 @@ async function resolveKodik(sourceUrl: string): Promise<ResolvedM3u8 | null> {
       }
     }
 
-    console.error("resolveKodik: no valid sources, qualities tried:", QUALITY_ORDER.join(","));
     return null;
   } catch (e: any) {
-    console.error("resolveKodik outer:", e?.message || String(e));
     return null;
   }
 }
@@ -120,8 +112,7 @@ export async function resolveM3u8Url(sourceUrl: string): Promise<ResolvedM3u8 | 
     }
 
     return null;
-  } catch (e: any) {
-    console.error("resolveM3u8Url error:", e?.message || String(e));
+  } catch {
     return null;
   }
 }

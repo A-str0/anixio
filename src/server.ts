@@ -1,5 +1,4 @@
 import * as http from "http";
-import * as url from "url";
 import { getRouter } from "stremio-addon-sdk";
 import { addonInterface } from "./addon";
 import { resolveM3u8Url, rewriteManifest } from "./play";
@@ -13,6 +12,15 @@ function setCors(res: http.ServerResponse) {
   res.setHeader("Access-Control-Allow-Headers", "*");
 }
 
+function getQueryParam(req: http.IncomingMessage, name: string): string | null {
+  try {
+    const urlObj = new URL(req.url || "/", "http://localhost");
+    return urlObj.searchParams.get(name);
+  } catch {
+    return null;
+  }
+}
+
 async function handlePlay(req: http.IncomingMessage, res: http.ServerResponse) {
   setCors(res);
 
@@ -22,9 +30,7 @@ async function handlePlay(req: http.IncomingMessage, res: http.ServerResponse) {
   }
 
   try {
-    const parsed = url.parse(req.url || "", true);
-    const src = parsed.query.src as string;
-
+    const src = getQueryParam(req, "src");
     if (!src) {
       res.writeHead(400);
       return res.end(JSON.stringify({ err: "missing src param" }));
@@ -32,9 +38,8 @@ async function handlePlay(req: http.IncomingMessage, res: http.ServerResponse) {
 
     const decodedSrc = decodeURIComponent(src);
     const m3u8 = await resolveM3u8Url(decodedSrc);
-
     if (!m3u8) {
-      res.writeHead(500);
+      res.writeHead(502);
       return res.end(JSON.stringify({ err: "failed to resolve stream" }));
     }
 
