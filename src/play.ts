@@ -22,9 +22,10 @@ async function resolveKodik(sourceUrl: string): Promise<ResolvedM3u8 | null> {
     let urlParams: Record<string, string>;
     try {
       urlParams = JSON.parse(paramsMatch[1]);
-    } catch {
-      return null;
-    }
+  } catch (e: any) {
+    console.error("resolveKodik error:", e.message);
+    return null;
+  }
 
     const apiBody: Record<string, string> = {
       ...urlParams,
@@ -73,7 +74,8 @@ async function resolveKodik(sourceUrl: string): Promise<ResolvedM3u8 | null> {
     }
 
     return null;
-  } catch {
+  } catch (e: any) {
+    console.error("resolveKodik outer:", e?.message || String(e));
     return null;
   }
 }
@@ -106,7 +108,8 @@ export async function resolveM3u8Url(sourceUrl: string): Promise<ResolvedM3u8 | 
     }
 
     return null;
-  } catch {
+  } catch (e: any) {
+    console.error("resolveM3u8Url error:", e?.message || String(e));
     return null;
   }
 }
