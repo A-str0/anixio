@@ -50,7 +50,10 @@ async function resolveKodik(sourceUrl: string): Promise<ResolvedM3u8 | null> {
       return null;
     }
 
-    if (!json.links) return null;
+    if (!json.links) {
+      console.error("resolveKodik: no links in response, keys:", Object.keys(json).join(","));
+      return null;
+    }
 
     const links: Record<string, { src: string }[]> = json.links;
 
@@ -60,7 +63,8 @@ async function resolveKodik(sourceUrl: string): Promise<ResolvedM3u8 | null> {
         let src = sources[0].src;
 
         const validUrlPattern = /\/\/(get|cloud)\.(kodik-storage|solodcdn)\.com\/useruploads\/.*?\/.*?\/(240|360|480|720|1080)\.mp4:hls:manifest.m3u8/s;
-        if (!validUrlPattern.test(src)) {
+        const isCdnProxy = src.includes("/s/m/") || src.includes("://");
+        if (!validUrlPattern.test(src) && !isCdnProxy) {
           try {
             const decrypted = src.replace(/[a-zA-Z]/g, (e: string) => {
               let code = e.charCodeAt(0);
@@ -80,6 +84,7 @@ async function resolveKodik(sourceUrl: string): Promise<ResolvedM3u8 | null> {
       }
     }
 
+    console.error("resolveKodik: no valid sources, qualities tried:", QUALITY_ORDER.join(","));
     return null;
   } catch (e: any) {
     console.error("resolveKodik outer:", e?.message || String(e));
