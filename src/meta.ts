@@ -1,11 +1,16 @@
 import { Anixart } from "anixapi";
 import type { ContentType, MetaDetail } from "stremio-addon-sdk";
 import { toMetaDetail, parseAnixartId } from "./utils";
+import { resolveToAnixart } from "./resolve";
 
 const client = new Anixart({});
 
 export async function metaHandler(args: { type: ContentType; id: string }) {
-  const releaseId = parseAnixartId(args.id);
+  let releaseId = parseAnixartId(args.id);
+
+  if (!releaseId) {
+    releaseId = await resolveToAnixart(args.type, args.id);
+  }
 
   if (!releaseId) {
     return { meta: {} as MetaDetail };
