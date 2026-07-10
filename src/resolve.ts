@@ -48,14 +48,15 @@ function seasonPattern(season: number | undefined): RegExp | null {
   return new RegExp(
     `(?:^|[^a-zа-яё0-9])${season}(?:$|[^a-zа-яё0-9])|` +
     `season\\s*${season}|` +
+    `[RSrs]${season}(?:$|[^a-zа-яё0-9])|` +
     `${season}(?:nd|rd|th|й|я|е)`,
     "i"
   );
 }
 
 function scoreRelease(
-  searchTitle: string, 
-  release: any, 
+  searchTitle: string,
+  release: any,
   season: number | undefined,
   year: number | null
 ): number {
@@ -74,8 +75,7 @@ function scoreRelease(
     } else if (nt.length >= nr.length && nt.includes(nr)) {
       score = Math.max(score, 70);
     } else {
-      // Partial match: search title words in release name
-      const searchWords = nt.split(/\s+/).filter((w: string) => w.length > 3);
+      const searchWords = searchTitle.toLowerCase().split(/[^a-zа-яё0-9]+/).filter((w: string) => w.length > 3);
       const matched = searchWords.filter((w: string) => nr.includes(w));
       if (matched.length >= searchWords.length * 0.7) {
         score = Math.max(score, 50 + matched.length * 10);
@@ -83,8 +83,9 @@ function scoreRelease(
     }
   }
 
-  // Season bonus
-  if (sp) {
+  if (season && release.season === season) {
+    score += 50;
+  } else if (sp) {
     for (const name of names) {
       if (sp.test(name)) {
         score += 40;
@@ -93,7 +94,6 @@ function scoreRelease(
     }
   }
 
-  // Year bonus: prefer matching year or close years for sequels
   if (year && release.year) {
     const releaseYear = parseInt(release.year, 10);
     if (!isNaN(releaseYear)) {
@@ -105,15 +105,74 @@ function scoreRelease(
   return score;
 }
 
-async function findAllCandidates(query: string, year: number | null): Promise<any[]> {
-  const candidates: any[] = [];
+async function searchCandidates(query: string, year: number | null): Promise<any[]> {
+  const seen = new Set<number>();
+  const results: any[] = [];
+
+  const addResults = (content: any[]) => {
+    for (const r of content) {
+      if (!seen.has(r.id)) {
+        seen.add(r.id);
+        results.push(r);
+      }
+    }
+  };
+
+  const trySearch = async (q: string): Promise<boolean> => {
+    const [v2, v1] = await Promise.allSettled([
+      (async () => {
+        const items: any[] = [];
+        for (let page = 0; page < 2; page++) {
+          const r = await client.endpoints.search.releaseSearch(page, {
+            page,
+            query: q,
+            searchBy: 0,
+          });
+          if (!r.content || r.content.length === 0) break;
+          items.push(...r.content);
+        }
+        return items;
+      })(),
+      (async () => {
+        const items: any[] = [];
+        for (let page = 0; page < 2; page++) {
+          const r = await client.call<any, any>({
+            path: `/search/releases/${page}`,
+            method: "POST",
+            json: { page, query: q, searchBy: 0 },
+          });
+          if (!r.content || r.content.length === 0) break;
+          items.push(...r.content);
+        }
+        return items;
+      })(),
+    ]);
+
+    if (v2.status === "fulfilled") addResults(v2.value);
+    if (v1.status === "fulfilled") addResults(v1.value);
+    return results.length > 0;
+  };
+
+  if (await trySearch(query)) return results;
+
+  const colonIdx = query.indexOf(":");
+  if (colonIdx > 0) {
+    const shortQuery = query.substring(0, colonIdx).trim();
+    if (await trySearch(shortQuery)) return results;
+  }
+
+  const dashIdx = query.indexOf(" - ");
+  if (dashIdx > 0) {
+    const shortQuery = query.substring(0, dashIdx).trim();
+    if (await trySearch(shortQuery)) return results;
+  }
+
   try {
     for (let page = 0; page < 3; page++) {
       const body: any = { sort: 3 };
       if (year) {
-        // Widen year range for sequels
         body.start_year = year;
-        body.end_year = (year + 5);
+        body.end_year = year + 5;
       }
       const result = await client.call<any, any>({
         path: `/filter/${page}`,
@@ -121,10 +180,16 @@ async function findAllCandidates(query: string, year: number | null): Promise<an
         json: body,
       });
       if (!result.content || result.content.length === 0) break;
-      candidates.push(...result.content);
+      for (const r of result.content) {
+        if (!seen.has(r.id)) {
+          seen.add(r.id);
+          results.push(r);
+        }
+      }
     }
   } catch {}
-  return candidates;
+
+  return results;
 }
 
 function titleVariations(title: string): string[] {
@@ -139,7 +204,7 @@ export async function resolveToAnixart(type: ContentType, id: string): Promise<n
   const meta = await fetchCinemetaMeta(type, parsed.baseId);
   if (!meta) return null;
 
-  const candidates = await findAllCandidates(meta.name, meta.year);
+  const candidates = await searchCandidates(meta.name, meta.year);
 
   let bestId: number | null = null;
   let bestScore = 0;
