@@ -58,7 +58,7 @@ export function toMetaPreview(release: IRelease): MetaPreview {
 
 export function toMetaDetail(release: IRelease): MetaDetail {
   const totalEps = release.episodes_total || 0;
-  const season = 1;
+  const season = release.season || 1;
 
   const videos: MetaVideo[] = [];
   for (let ep = 1; ep <= totalEps; ep++) {
