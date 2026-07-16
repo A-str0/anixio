@@ -1,44 +1,22 @@
 import { Anixart, FilterSortType } from "anixapi";
-import type { Args, MetaPreview } from "stremio-addon-sdk";
-import { posterThumbUrl } from "./utils";
+import type { Args, MetaPreview, ContentType } from "stremio-addon-sdk";
+import { posterThumbUrl, anixartId } from "./utils";
 
 const client = new Anixart({});
-const CINEMETA = "https://v3-cinemeta.strem.io";
 
-interface CinemetaResult {
-  metas: { id: string; name: string; poster?: string; genres?: string[] }[];
-}
-
-const idCache = new Map<string, string>();
-const cacheTTL = 3600_000;
-const cacheTimestamps = new Map<string, number>();
-
-async function resolveImdbId(title: string): Promise<string | null> {
-  const cached = idCache.get(title);
-  if (cached) {
-    const ts = cacheTimestamps.get(title) || 0;
-    if (Date.now() - ts < cacheTTL) return cached;
-  }
-
-  try {
-    const url = `${CINEMETA}/catalog/series/top/search=${encodeURIComponent(title)}.json`;
-    const resp = await fetch(url);
-    if (!resp.ok) return null;
-    const data = (await resp.json()) as CinemetaResult;
-    if (!data.metas || data.metas.length === 0) return null;
-
-    const imdbId = data.metas[0].id;
-    idCache.set(title, imdbId);
-    cacheTimestamps.set(title, Date.now());
-    return imdbId;
-  } catch {
-    return null;
-  }
-}
-
-function releaseTypeToStremio(release: any): string {
+function releaseTypeToStremio(release: any): ContentType {
   if (release.category?.id === 2) return "movie";
   return "series";
+}
+
+function toMetaPreview(release: any): MetaPreview {
+  return {
+    id: anixartId(release.id),
+    type: releaseTypeToStremio(release),
+    name: release.title_ru || release.title_original || "",
+    poster: posterThumbUrl(release.poster),
+    posterShape: "regular" as const,
+  };
 }
 
 export async function catalogHandler(args: Args) {
@@ -58,26 +36,7 @@ export async function catalogHandler(args: Args) {
     }
 
     const releases = await fetchAnixartCatalog(id, page);
-    const metas = await Promise.all(
-      releases.map(async (r: any) => {
-        const searchTitle = r.title_original || r.title_ru;
-        const imdbId = await resolveImdbId(searchTitle);
-
-        if (imdbId) {
-          return {
-            id: imdbId,
-            type: releaseTypeToStremio(r),
-            name: r.title_ru || r.title_original || "",
-            poster: posterThumbUrl(r.poster),
-            posterShape: "regular" as const,
-          } as MetaPreview;
-        }
-
-        return null;
-      })
-    );
-
-    return { metas: metas.filter(Boolean) as MetaPreview[] };
+    return { metas: releases.map(toMetaPreview) };
   } catch (err) {
     console.error("Catalog error:", err);
     return { metas: [] };
@@ -104,13 +63,42 @@ async function fetchAnixartCatalog(id: string, page: number): Promise<any[]> {
 }
 
 async function searchCatalog(type: string, query: string) {
-  try {
-    const url = `${CINEMETA}/catalog/${type}/top/search=${encodeURIComponent(query)}.json`;
-    const resp = await fetch(url);
-    if (!resp.ok) return { metas: [] as MetaPreview[] };
-    const data = (await resp.json()) as { metas: MetaPreview[] };
-    return { metas: data.metas || [] };
-  } catch {
+  const seen = new Set<number>();
+  const releases: any[] = [];
+
+  const addResults = (content: any[]) => {
+    for (const r of content) {
+      if (!seen.has(r.id)) {
+        seen.add(r.id);
+        releases.push(r);
+      }
+    }
+  };
+
+  const [v2, v1] = await Promise.allSettled([
+    (async () => {
+      for (let p = 0; p < 2; p++) {
+        const r = await client.endpoints.search.releaseSearch(p, { page: p, query, searchBy: 0 });
+        if (!r.content || r.content.length === 0) break;
+        addResults(r.content);
+      }
+    })(),
+    (async () => {
+      for (let p = 0; p < 2; p++) {
+        const r = await client.call<any, any>({
+          path: `/search/releases/${p}`,
+          method: "POST",
+          json: { page: p, query, searchBy: 0 },
+        });
+        if (!r.content || r.content.length === 0) break;
+        addResults(r.content);
+      }
+    })(),
+  ]);
+
+  if (v2.status === "rejected" && v1.status === "rejected") {
     return { metas: [] as MetaPreview[] };
   }
+
+  return { metas: releases.map(toMetaPreview) };
 }
