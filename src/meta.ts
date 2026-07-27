@@ -25,7 +25,7 @@ export async function metaHandler(args: { type: ContentType; id: string }) {
 
     const meta = toMetaDetail(result.release);
 
-    const currentSeason = result.release.season || 1;
+    const currentSeason = 1;
 
     let nextRelease: any = null;
 
