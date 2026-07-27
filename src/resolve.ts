@@ -54,13 +54,13 @@ function seasonPattern(season: number | undefined): RegExp | null {
   );
 }
 
-function scoreRelease(
+export function scoreRelease(
   searchTitle: string,
   release: any,
   season: number | undefined,
   year: number | null
 ): number {
-  let score = 0;
+  let nameScore = 0;
   const sp = seasonPattern(season);
   const names: string[] = [release.title_ru, release.title_original, release.title_alt].filter(Boolean);
 
@@ -69,19 +69,23 @@ function scoreRelease(
     const nr = normalize(name);
 
     if (nt === nr) {
-      score = Math.max(score, 100);
+      nameScore = Math.max(nameScore, 100);
     } else if (nr.length >= nt.length && nr.includes(nt)) {
-      score = Math.max(score, 85);
+      nameScore = Math.max(nameScore, 85);
     } else if (nt.length >= nr.length && nt.includes(nr)) {
-      score = Math.max(score, 70);
+      nameScore = Math.max(nameScore, 70);
     } else {
       const searchWords = searchTitle.toLowerCase().split(/[^a-zа-яё0-9]+/).filter((w: string) => w.length > 3);
       const matched = searchWords.filter((w: string) => nr.includes(w));
       if (matched.length >= searchWords.length * 0.7) {
-        score = Math.max(score, 50 + matched.length * 10);
+        nameScore = Math.max(nameScore, 50 + matched.length * 10);
       }
     }
   }
+
+  if (nameScore === 0) return 0;
+
+  let score = nameScore;
 
   if (season && release.season === season) {
     score += 50;
@@ -167,34 +171,22 @@ async function searchCandidates(query: string, year: number | null): Promise<any
     if (await trySearch(shortQuery)) return results;
   }
 
-  try {
-    for (let page = 0; page < 3; page++) {
-      const body: any = { sort: 3 };
-      if (year) {
-        body.start_year = year;
-        body.end_year = year + 5;
-      }
-      const result = await client.call<any, any>({
-        path: `/filter/${page}`,
-        method: "POST",
-        json: body,
-      });
-      if (!result.content || result.content.length === 0) break;
-      for (const r of result.content) {
-        if (!seen.has(r.id)) {
-          seen.add(r.id);
-          results.push(r);
-        }
-      }
-    }
-  } catch {}
-
   return results;
 }
 
 function titleVariations(title: string): string[] {
-  const parts = title.split(":");
-  return [...new Set([title, parts[0].trim()])];
+  const variations = new Set<string>([title]);
+
+  const colonIdx = title.indexOf(":");
+  if (colonIdx > 0) {
+    variations.add(title.substring(0, colonIdx).trim());
+  }
+
+  if (title.toLowerCase().startsWith("the ")) {
+    variations.add(title.substring(4));
+  }
+
+  return [...variations];
 }
 
 export async function resolveToAnixart(type: ContentType, id: string): Promise<number | null> {
@@ -205,6 +197,8 @@ export async function resolveToAnixart(type: ContentType, id: string): Promise<n
   if (!meta) return null;
 
   const candidates = await searchCandidates(meta.name, meta.year);
+
+  if (candidates.length === 0) return null;
 
   let bestId: number | null = null;
   let bestScore = 0;
@@ -219,5 +213,7 @@ export async function resolveToAnixart(type: ContentType, id: string): Promise<n
     }
   }
 
-  return bestScore >= 50 ? bestId : null;
+  if (bestScore >= 50) return bestId;
+
+  return candidates[0].id;
 }

@@ -1,20 +1,22 @@
 import { Anixart, FilterSortType } from "anixapi";
 import type { Args, MetaPreview, ContentType } from "stremio-addon-sdk";
 import { posterThumbUrl, anixartId } from "./utils";
+import { scoreRelease } from "./resolve";
 
 const client = new Anixart({});
+const CINEMETA_BASE = "https://v3-cinemeta.strem.io";
 
 function releaseTypeToStremio(release: any): ContentType {
   if (release.category?.id === 2) return "movie";
   return "series";
 }
 
-function toMetaPreview(release: any): MetaPreview {
+function toMetaPreview(release: any, enrich?: { name?: string; poster?: string }): MetaPreview {
   return {
     id: anixartId(release.id),
     type: releaseTypeToStremio(release),
-    name: release.title_ru || release.title_original || "",
-    poster: posterThumbUrl(release.poster),
+    name: enrich?.name || release.title_ru || release.title_original || "",
+    poster: enrich?.poster || posterThumbUrl(release.poster),
     posterShape: "regular" as const,
   };
 }
@@ -36,7 +38,7 @@ export async function catalogHandler(args: Args) {
     }
 
     const releases = await fetchAnixartCatalog(id, page);
-    return { metas: releases.map(toMetaPreview) };
+    return { metas: releases.map((r) => toMetaPreview(r)) };
   } catch (err) {
     console.error("Catalog error:", err);
     return { metas: [] };
@@ -62,7 +64,7 @@ async function fetchAnixartCatalog(id: string, page: number): Promise<any[]> {
   }
 }
 
-async function searchCatalog(type: string, query: string) {
+async function searchAnixartReleases(query: string): Promise<any[]> {
   const seen = new Set<number>();
   const releases: any[] = [];
 
@@ -96,9 +98,86 @@ async function searchCatalog(type: string, query: string) {
     })(),
   ]);
 
-  if (v2.status === "rejected" && v1.status === "rejected") {
+  return releases;
+}
+
+interface CinemetaMeta {
+  id: string;
+  name: string;
+  poster?: string;
+  type?: ContentType;
+  releaseInfo?: string;
+}
+
+async function searchCinemeta(type: string, query: string): Promise<CinemetaMeta[]> {
+  try {
+    const url = `${CINEMETA_BASE}/catalog/${type}/top/search=${encodeURIComponent(query)}.json`;
+    const resp = await fetch(url);
+    if (!resp.ok) return [];
+    const data = (await resp.json()) as { metas?: CinemetaMeta[] };
+    return data.metas || [];
+  } catch {
+    return [];
+  }
+}
+
+function matchWithCinemeta(anixartReleases: any[], cinemetaResults: CinemetaMeta[]): MetaPreview[] {
+  const used = new Set<string>();
+  const enriched: MetaPreview[] = [];
+
+  for (const release of anixartReleases) {
+    let bestMatch: CinemetaMeta | null = null;
+    let bestScore = 0;
+
+    for (const cm of cinemetaResults) {
+      if (used.has(cm.id)) continue;
+      const year = cm.releaseInfo ? parseInt(cm.releaseInfo, 10) || null : null;
+      const score = scoreRelease(cm.name, release, undefined, year);
+      if (score > bestScore) {
+        bestScore = score;
+        bestMatch = cm;
+      }
+    }
+
+    if (bestMatch && bestScore >= 50) {
+      used.add(bestMatch.id);
+      enriched.push(toMetaPreview(release, {
+        name: bestMatch.name,
+        poster: bestMatch.poster,
+      }));
+    } else {
+      enriched.push(toMetaPreview(release));
+    }
+  }
+
+  return enriched;
+}
+
+async function searchCatalog(type: string, query: string) {
+  const [anixartResults, cinemetaResults] = await Promise.all([
+    searchAnixartReleases(query),
+    searchCinemeta(type, query),
+  ]);
+
+  if (anixartResults.length === 0 && cinemetaResults.length === 0) {
     return { metas: [] as MetaPreview[] };
   }
 
-  return { metas: releases.map(toMetaPreview) };
+  if (anixartResults.length > 0 && cinemetaResults.length > 0) {
+    return { metas: matchWithCinemeta(anixartResults, cinemetaResults) };
+  }
+
+  if (anixartResults.length > 0) {
+    return { metas: anixartResults.map((r) => toMetaPreview(r)) };
+  }
+
+  return {
+    metas: cinemetaResults.map((cm) => ({
+      id: cm.id,
+      type: cm.type || (type as ContentType),
+      name: cm.name,
+      poster: cm.poster,
+      posterShape: "regular" as const,
+    })) as MetaPreview[],
+  };
 }

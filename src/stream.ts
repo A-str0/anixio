@@ -134,6 +134,7 @@ export async function streamHandler(args: { type: ContentType; id: string }): Pr
 
           const stream = await resolveStream(labelWithEp, ep.url);
           if (stream) {
+            stream.behaviorHints = { group: String(dubber.id) };
             streams.push(stream);
           }
         }
