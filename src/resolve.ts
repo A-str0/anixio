@@ -189,6 +189,24 @@ function titleVariations(title: string): string[] {
   return [...variations];
 }
 
+async function fetchAnilistRomaji(title: string): Promise<string | null> {
+  try {
+    const resp = await fetch("https://graphql.anilist.co", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        query: `query($s: String){Media(search:$s,type:ANIME){title{romaji}}}`,
+        variables: { s: title },
+      }),
+    });
+    if (!resp.ok) return null;
+    const data = (await resp.json()) as any;
+    return data?.data?.Media?.title?.romaji || null;
+  } catch {
+    return null;
+  }
+}
+
 export async function resolveToAnixart(type: ContentType, id: string): Promise<number | null> {
   const parsed = parseImdbId(id);
   if (!parsed) return null;
@@ -196,14 +214,18 @@ export async function resolveToAnixart(type: ContentType, id: string): Promise<n
   const meta = await fetchCinemetaMeta(type, parsed.baseId);
   if (!meta) return null;
 
-  const candidates = await searchCandidates(meta.name, meta.year);
+  const romaji = await fetchAnilistRomaji(meta.name);
+
+  const searchQuery = romaji || meta.name;
+  const candidates = await searchCandidates(searchQuery, meta.year);
 
   if (candidates.length === 0) return null;
 
   let bestId: number | null = null;
   let bestScore = 0;
 
-  for (const q of titleVariations(meta.name)) {
+  const queries = [romaji, ...titleVariations(meta.name)].filter(Boolean) as string[];
+  for (const q of queries) {
     for (const r of candidates) {
       const score = scoreRelease(q, r, parsed.season, meta.year);
       if (score > bestScore) {
