@@ -8,6 +8,10 @@ const builder = new addonBuilder({
   version: "1.0.0",
   name: "Anixio",
   description: "Anime catalog and streams from Anixart",
+  stremioAddonsConfig: [{
+      issuer: "https://stremio-addons.net",
+      signature: "eyJhbGciOiJkaXIiLCJlbmMiOiJBMTI4Q0JDLUhTMjU2In0..IvOMvELdDFg5Bexp1KO-JA.oBCWVbenlaeReHsDbz-RbTXNWknjA9WHw3J_u6SYl9MYKrKS2EnJxDnsbJcvqAn5yGq1M-YEPsPyqZSh9BMflPXF5j8fY7xtcvZQzERkuwiEri5dvyB8N4EYvGBjfNWV.LCz5Bnx-FLm0ti41Shkbwg"
+  }],
   logo: "https://s.anixmirai.com/posters/thumbnails/default.jpg",
   resources: ["catalog", "meta", "stream"],
   types: ["series", "movie"],
