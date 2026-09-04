@@ -1,0 +1,37 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.addonInterface = void 0;
+const stremio_addon_sdk_1 = require("stremio-addon-sdk");
+const catalog_1 = require("./catalog");
+const meta_1 = require("./meta");
+const stream_1 = require("./stream");
+const builder = new stremio_addon_sdk_1.addonBuilder({
+    id: "community.anixio",
+    version: "1.0.0",
+    name: "Anixio",
+    description: "Anime catalog and streams from Anixart",
+    logo: "https://s.anixmirai.com/posters/thumbnails/default.jpg",
+    resources: ["catalog", "meta", "stream"],
+    types: ["series", "movie"],
+    idPrefixes: ["anixart", "tt"],
+    catalogs: [
+        { id: "anixart_popular", name: "Anixart — Популярное", type: "series" },
+        { id: "anixart_ongoing", name: "Anixart — Онгоинги", type: "series" },
+        { id: "anixart_latest", name: "Anixart — Новинки", type: "series" },
+        { id: "anixart_announce", name: "Anixart — Анонсы", type: "series" },
+        { id: "anixart_genre_1", name: "Anixart — Экшен", type: "series" },
+        { id: "anixart_genre_3", name: "Anixart — Комедия", type: "series" },
+        { id: "anixart_genre_4", name: "Anixart — Драма", type: "series" },
+        { id: "anixart_genre_6", name: "Anixart — Фэнтези", type: "series" },
+        { id: "anixart_genre_13", name: "Anixart — Романтика", type: "series" },
+        { id: "anixart_genre_14", name: "Anixart — Фантастика", type: "series" },
+        { id: "anixart_genre_15", name: "Anixart — Повседневность", type: "series" },
+        { id: "anixart_genre_17", name: "Anixart — Сверхъестественное", type: "series" },
+        { id: "anixart_genre_19", name: "Anixart — Сёнен", type: "series" },
+        { id: "anixart_genre_25", name: "Anixart — Исэкай", type: "series" },
+    ],
+});
+builder.defineCatalogHandler(catalog_1.catalogHandler);
+builder.defineMetaHandler(meta_1.metaHandler);
+builder.defineStreamHandler(stream_1.streamHandler);
+exports.addonInterface = builder.getInterface();
