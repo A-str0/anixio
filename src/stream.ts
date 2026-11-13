@@ -1,9 +1,34 @@
 import { Anixart, KodikParser, AniLibriaParser, SibnetParser } from "anixapi";
 import type { ContentType, Stream } from "stremio-addon-sdk";
-import { parseAnixartId, parseAnixartEpisodeId } from "./utils";
+import { parseAnixartId, parseAnixartEpisodeId, withTimeout, mapLimit, STEP_TIMEOUT_MS } from "./utils";
 import { resolveToAnixart } from "./resolve";
 
 const client = new Anixart({});
+
+// The dubber walk used to be sequential with no timeouts, so one stalled source held the whole
+// response well past Stremio's patience. Dubbers are fanned out, every step is bounded by
+// STEP_TIMEOUT_MS, and whatever has resolved by the deadline is returned.
+const RESPONSE_DEADLINE_MS = 20_000;
+const CONCURRENCY = 8;
+const MAX_STREAMS = 50;
+
+// ANIXIO_DEBUG=1 logs where the time goes for each stream request (phase timings, misses).
+const DEBUG = process.env.ANIXIO_DEBUG === "1";
+const debug = (...parts: unknown[]) => { if (DEBUG) console.log("[stream]", ...parts); };
+
+interface Candidate {
+  dubberIndex: number;
+  sourceIndex: number;
+  position: number;
+  dubberId: number;
+  label: string;
+  url: string;
+}
+
+// Anixart's own order: dubbers by popularity, then sources, then episodes.
+function byOrder(a: Candidate, b: Candidate): number {
+  return a.dubberIndex - b.dubberIndex || a.sourceIndex - b.sourceIndex || a.position - b.position;
+}
 
 function toDirectMp4(m3u8Url: string): string | null {
   if (m3u8Url.includes(":hls:manifest.m3u8")) {
@@ -18,6 +43,12 @@ function toDirectMp4(m3u8Url: string): string | null {
 function fixUrl(url: string): string {
   if (url.startsWith("//")) return `https:${url}`;
   return url;
+}
+
+// Anixart occasionally hands back the rest of an iframe tag after the URL, e.g.
+// `https://video.sibnet.ru/shell.php?videoid=123" frameborder="0" scrolling="no`.
+function cleanUrl(url: string): string {
+  return url.trim().split(/["'\s]/)[0];
 }
 
 async function resolveStream(label: string, sourceUrl: string): Promise<Stream | null> {
@@ -68,12 +99,73 @@ async function resolveStream(label: string, sourceUrl: string): Promise<Stream |
   }
 }
 
+// Walks dubbers → sources → episodes and appends every matching episode to `out` as it is
+// found, so a deadline hit mid-walk still leaves the caller with whatever was collected.
+async function collectCandidates(
+  releaseId: number,
+  targetEpisode: number | null,
+  out: Candidate[],
+  expired: () => boolean,
+): Promise<void> {
+  const typesResult = await withTimeout(
+    client.endpoints.episode.types(releaseId),
+    STEP_TIMEOUT_MS,
+    null,
+    `anixart types(${releaseId})`,
+  );
+  const dubbers = typesResult?.types || [];
+
+  await mapLimit(dubbers, CONCURRENCY, async (dubber, dubberIndex) => {
+    const sourcesResult = await withTimeout(
+      client.endpoints.episode.sources(releaseId, dubber.id),
+      STEP_TIMEOUT_MS,
+      null,
+      `anixart sources(${releaseId}, ${dubber.name})`,
+    );
+    const sources = sourcesResult?.sources || [];
+
+    for (const [sourceIndex, source] of sources.entries()) {
+      if (expired()) return;
+
+      const episodesResult = await withTimeout(
+        client.endpoints.episode.episodes(releaseId, dubber.id, source.id),
+        STEP_TIMEOUT_MS,
+        null,
+        `anixart episodes(${releaseId}, ${dubber.name}, ${source.name})`,
+      );
+      const episodes = episodesResult?.episodes || [];
+
+      for (const ep of episodes) {
+        if (targetEpisode !== null && ep.position !== targetEpisode) continue;
+        const url = ep.url ? cleanUrl(ep.url) : "";
+        if (!url) continue;
+
+        const baseLabel = `${dubber.name} | ${source.name}`;
+        out.push({
+          dubberIndex,
+          sourceIndex,
+          position: Number(ep.position) || 0,
+          dubberId: dubber.id,
+          label: ep.name ? `${baseLabel} — ${ep.name}` : baseLabel,
+          url,
+        });
+      }
+    }
+  }, expired);
+}
+
 export async function streamHandler(args: { type: ContentType; id: string }): Promise<{ streams: Stream[] }> {
+  const started = Date.now();
+  const deadline = started + RESPONSE_DEADLINE_MS;
+  const timeLeft = () => deadline - Date.now();
+  const expired = () => timeLeft() <= 0;
+  const elapsed = () => `after ${Date.now() - started} ms`;
+
   let episodeInfo = parseAnixartEpisodeId(args.id);
   let releaseId = episodeInfo?.releaseId ?? parseAnixartId(args.id);
 
   if (!releaseId) {
-    const resolved = await resolveToAnixart(args.type, args.id);
+    const resolved = await withTimeout(resolveToAnixart(args.type, args.id), timeLeft(), null, `resolve ${args.id}`);
     if (resolved) {
       releaseId = resolved;
       const parsed = args.id.match(/:(\d+):(\d+)$/);
@@ -87,63 +179,49 @@ export async function streamHandler(args: { type: ContentType; id: string }): Pr
     }
   }
 
-  if (!releaseId) return { streams: [] };
+  debug(args.id, "release", releaseId, elapsed());
+  if (!releaseId || expired()) return { streams: [] };
 
-  try {
-    const streams: Stream[] = [];
-    const seen = new Set<string>();
-    const targetEpisode = episodeInfo?.episode ?? null;
+  const targetEpisode = episodeInfo?.episode ?? null;
 
-    const typesResult = await client.endpoints.episode.types(releaseId);
-    const dubbers = typesResult.types || [];
+  const candidates: Candidate[] = [];
+  const collected = await withTimeout<string>(
+    collectCandidates(releaseId, targetEpisode, candidates, expired).then(() => "done"),
+    timeLeft(),
+    "deadline",
+    `collect ${args.id}`,
+  );
+  debug(args.id, "candidates", candidates.length, collected, elapsed());
+  if (expired()) return { streams: [] };
 
-    for (const dubber of dubbers) {
-      if (streams.length >= 50) break;
+  // Several dubbers (typically subtitle groups) point at the same player URL; resolve it once.
+  const seen = new Set<string>();
+  const unique = candidates
+    .sort(byOrder)
+    .filter((c) => (seen.has(c.url) ? false : (seen.add(c.url), true)));
 
-      let sourcesResult;
-      try {
-        sourcesResult = await client.endpoints.episode.sources(releaseId, dubber.id);
-      } catch {
-        continue;
+  // Candidates are tried in order until MAX_STREAMS have actually resolved (or time runs out).
+  const resolved: Array<{ candidate: Candidate; stream: Stream }> = [];
+  const finished = await withTimeout<string>(
+    mapLimit(unique, CONCURRENCY, async (c) => {
+      const stream = await withTimeout(resolveStream(c.label, c.url), STEP_TIMEOUT_MS, null, `resolve ${c.label}`);
+      if (stream) {
+        stream.behaviorHints = { group: String(c.dubberId) };
+        resolved.push({ candidate: c, stream });
+      } else {
+        debug(args.id, "no stream:", c.label, c.url.slice(0, 70));
       }
+    }, () => expired() || resolved.length >= MAX_STREAMS).then(() => "done"),
+    timeLeft(),
+    "deadline",
+    `streams ${args.id}`,
+  );
+  debug(args.id, "streams", resolved.length, "of", unique.length, finished, elapsed());
 
-      const sources = sourcesResult.sources || [];
-
-      for (const source of sources) {
-        if (streams.length >= 50) break;
-
-        let episodesResult;
-        try {
-          episodesResult = await client.endpoints.episode.episodes(releaseId, dubber.id, source.id);
-        } catch {
-          continue;
-        }
-
-        const episodes = episodesResult.episodes || [];
-
-        for (const ep of episodes) {
-          if (targetEpisode !== null && ep.position !== targetEpisode) continue;
-          if (!ep.url) continue;
-          if (streams.length >= 50) break;
-
-          const baseLabel = `${dubber.name} | ${source.name}`;
-          const labelWithEp = ep.name ? `${baseLabel} — ${ep.name}` : baseLabel;
-
-          if (seen.has(ep.url)) continue;
-          seen.add(ep.url);
-
-          const stream = await resolveStream(labelWithEp, ep.url);
-          if (stream) {
-            stream.behaviorHints = { group: String(dubber.id) };
-            streams.push(stream);
-          }
-        }
-      }
-    }
-
-    return { streams };
-  } catch (err) {
-    console.error("Stream error:", err);
-    return { streams: [] };
-  }
+  return {
+    streams: resolved
+      .sort((a, b) => byOrder(a.candidate, b.candidate))
+      .slice(0, MAX_STREAMS)
+      .map((r) => r.stream),
+  };
 }

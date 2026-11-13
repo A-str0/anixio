@@ -1,6 +1,8 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.ANIXART_POSTER_BASE = void 0;
+exports.STEP_TIMEOUT_MS = exports.ANIXART_POSTER_BASE = void 0;
+exports.withTimeout = withTimeout;
+exports.mapLimit = mapLimit;
 exports.posterUrl = posterUrl;
 exports.posterThumbUrl = posterThumbUrl;
 exports.anixartId = anixartId;
@@ -10,6 +12,35 @@ exports.parseAnixartEpisodeId = parseAnixartEpisodeId;
 exports.toMetaPreview = toMetaPreview;
 exports.toMetaDetail = toMetaDetail;
 exports.ANIXART_POSTER_BASE = "https://s.anixmirai.com/posters";
+// Every upstream call (Anixart API, Kodik, Sibnet, AniLibria, Cinemeta, AniList) can stall for
+// minutes, and the anixapi client never forwards an AbortSignal, so steps that cannot be
+// cancelled are raced against a timer and abandoned instead.
+exports.STEP_TIMEOUT_MS = 8_000;
+function withTimeout(promise, ms, fallback, label) {
+    return new Promise((resolve) => {
+        const timer = setTimeout(() => {
+            console.warn(`${label}: timed out after ${ms} ms`);
+            resolve(fallback);
+        }, ms);
+        promise.then((value) => { clearTimeout(timer); resolve(value); }, (err) => {
+            clearTimeout(timer);
+            console.error(`${label}: failed:`, err instanceof Error ? err.message : err);
+            resolve(fallback);
+        });
+    });
+}
+// Runs fn over items with at most `limit` in flight; workers stop dequeuing once shouldStop()
+// is true, so a deadline or a filled result set bounds the work that is still started.
+async function mapLimit(items, limit, fn, shouldStop = () => false) {
+    let next = 0;
+    const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+        while (next < items.length && !shouldStop()) {
+            const index = next++;
+            await fn(items[index], index);
+        }
+    });
+    await Promise.all(workers);
+}
 function posterUrl(hash) {
     if (!hash)
         return "";

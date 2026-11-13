@@ -3,8 +3,12 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.scoreRelease = scoreRelease;
 exports.resolveToAnixart = resolveToAnixart;
 const anixapi_1 = require("anixapi");
+const utils_1 = require("./utils");
 const client = new anixapi_1.Anixart({});
 const CINEMETA_BASE = "https://v3-cinemeta.strem.io";
+// The romaji lookup only refines the search query (meta.name is the fallback), so a stalled
+// AniList must not eat the budget of the Anixart search that actually matters.
+const ANILIST_TIMEOUT_MS = 3_000;
 function parseImdbId(id) {
     const match = id.match(/^(tt\d+)(?::(\d+):(\d+))?$/);
     if (!match)
@@ -18,7 +22,7 @@ function parseImdbId(id) {
 async function fetchCinemetaMeta(type, imdbId) {
     try {
         const url = `${CINEMETA_BASE}/meta/${type}/${imdbId}.json`;
-        const resp = await fetch(url);
+        const resp = await fetch(url, { signal: AbortSignal.timeout(utils_1.STEP_TIMEOUT_MS) });
         if (!resp.ok)
             return null;
         const data = (await resp.json());
@@ -103,9 +107,11 @@ async function searchCandidates(query, year) {
             }
         }
     };
+    // anixapi does not forward AbortSignal, so each search leg is bounded by withTimeout and a
+    // failed or stalled leg simply contributes no results.
     const trySearch = async (q) => {
-        const [v2, v1] = await Promise.allSettled([
-            (async () => {
+        const [v2, v1] = await Promise.all([
+            (0, utils_1.withTimeout)((async () => {
                 const items = [];
                 for (let page = 0; page < 2; page++) {
                     const r = await client.endpoints.search.releaseSearch(page, {
@@ -118,8 +124,8 @@ async function searchCandidates(query, year) {
                     items.push(...r.content);
                 }
                 return items;
-            })(),
-            (async () => {
+            })(), utils_1.STEP_TIMEOUT_MS, [], `anixart search v2 "${q}"`),
+            (0, utils_1.withTimeout)((async () => {
                 const items = [];
                 for (let page = 0; page < 2; page++) {
                     const r = await client.call({
@@ -132,12 +138,10 @@ async function searchCandidates(query, year) {
                     items.push(...r.content);
                 }
                 return items;
-            })(),
+            })(), utils_1.STEP_TIMEOUT_MS, [], `anixart search v1 "${q}"`),
         ]);
-        if (v2.status === "fulfilled")
-            addResults(v2.value);
-        if (v1.status === "fulfilled")
-            addResults(v1.value);
+        addResults(v2);
+        addResults(v1);
         return results.length > 0;
     };
     if (await trySearch(query))
@@ -171,6 +175,7 @@ async function fetchAnilistRomaji(title) {
     try {
         const resp = await fetch("https://graphql.anilist.co", {
             method: "POST",
+            signal: AbortSignal.timeout(ANILIST_TIMEOUT_MS),
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
                 query: `query($s: String){Media(search:$s,type:ANIME){title{romaji}}}`,

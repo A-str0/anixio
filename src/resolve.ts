@@ -1,9 +1,13 @@
 import { Anixart } from "anixapi";
 import type { ContentType } from "stremio-addon-sdk";
+import { withTimeout, STEP_TIMEOUT_MS } from "./utils";
 
 const client = new Anixart({});
 
 const CINEMETA_BASE = "https://v3-cinemeta.strem.io";
+// The romaji lookup only refines the search query (meta.name is the fallback), so a stalled
+// AniList must not eat the budget of the Anixart search that actually matters.
+const ANILIST_TIMEOUT_MS = 3_000;
 
 interface CinemetaMeta {
   meta: {
@@ -27,7 +31,7 @@ function parseImdbId(id: string): { baseId: string; episode?: number; season?: n
 async function fetchCinemetaMeta(type: ContentType, imdbId: string): Promise<{ name: string; year: number | null } | null> {
   try {
     const url = `${CINEMETA_BASE}/meta/${type}/${imdbId}.json`;
-    const resp = await fetch(url);
+    const resp = await fetch(url, { signal: AbortSignal.timeout(STEP_TIMEOUT_MS) });
     if (!resp.ok) return null;
     const data = (await resp.json()) as CinemetaMeta;
     const name = data.meta?.name;
@@ -122,38 +126,50 @@ async function searchCandidates(query: string, year: number | null): Promise<any
     }
   };
 
+  // anixapi does not forward AbortSignal, so each search leg is bounded by withTimeout and a
+  // failed or stalled leg simply contributes no results.
   const trySearch = async (q: string): Promise<boolean> => {
-    const [v2, v1] = await Promise.allSettled([
-      (async () => {
-        const items: any[] = [];
-        for (let page = 0; page < 2; page++) {
-          const r = await client.endpoints.search.releaseSearch(page, {
-            page,
-            query: q,
-            searchBy: 0,
-          });
-          if (!r.content || r.content.length === 0) break;
-          items.push(...r.content);
-        }
-        return items;
-      })(),
-      (async () => {
-        const items: any[] = [];
-        for (let page = 0; page < 2; page++) {
-          const r = await client.call<any, any>({
-            path: `/search/releases/${page}`,
-            method: "POST",
-            json: { page, query: q, searchBy: 0 },
-          });
-          if (!r.content || r.content.length === 0) break;
-          items.push(...r.content);
-        }
-        return items;
-      })(),
+    const [v2, v1] = await Promise.all([
+      withTimeout(
+        (async () => {
+          const items: any[] = [];
+          for (let page = 0; page < 2; page++) {
+            const r = await client.endpoints.search.releaseSearch(page, {
+              page,
+              query: q,
+              searchBy: 0,
+            });
+            if (!r.content || r.content.length === 0) break;
+            items.push(...r.content);
+          }
+          return items;
+        })(),
+        STEP_TIMEOUT_MS,
+        [] as any[],
+        `anixart search v2 "${q}"`,
+      ),
+      withTimeout(
+        (async () => {
+          const items: any[] = [];
+          for (let page = 0; page < 2; page++) {
+            const r = await client.call<any, any>({
+              path: `/search/releases/${page}`,
+              method: "POST",
+              json: { page, query: q, searchBy: 0 },
+            });
+            if (!r.content || r.content.length === 0) break;
+            items.push(...r.content);
+          }
+          return items;
+        })(),
+        STEP_TIMEOUT_MS,
+        [] as any[],
+        `anixart search v1 "${q}"`,
+      ),
     ]);
 
-    if (v2.status === "fulfilled") addResults(v2.value);
-    if (v1.status === "fulfilled") addResults(v1.value);
+    addResults(v2);
+    addResults(v1);
     return results.length > 0;
   };
 
@@ -193,6 +209,7 @@ async function fetchAnilistRomaji(title: string): Promise<string | null> {
   try {
     const resp = await fetch("https://graphql.anilist.co", {
       method: "POST",
+      signal: AbortSignal.timeout(ANILIST_TIMEOUT_MS),
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         query: `query($s: String){Media(search:$s,type:ANIME){title{romaji}}}`,
